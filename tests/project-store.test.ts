@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import type { ClipItemRecord } from '../src/types/capture';
 import { createDefaultProject, type ClipProject } from '../src/types/editor';
-import { DB_NAME, CLIP_STORE_NAME, DB_VERSION, PROJECT_STORE_NAME, ProjectReferenceError, createProject, deleteProject, getProject, listClips, listProjects, openDatabase, saveClip, saveProject, loadProjectWithClips } from '../src/modules/storage/clipStore';
+import { DB_NAME, CLIP_STORE_NAME, DB_VERSION, PROJECT_STORE_NAME, ClipReferenceError, ProjectReferenceError, createProject, deleteClip, deleteProject, getClip, getProject, listClips, listProjects, openDatabase, saveClip, saveProject, loadProjectWithClips } from '../src/modules/storage/clipStore';
 
 function deleteDatabase(): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -98,5 +98,17 @@ describe('IndexedDB v2 project storage', () => {
     project.items.push(imageItem('item-1', 'missing'));
     await expect(saveProject(project)).rejects.toBeInstanceOf(ProjectReferenceError);
     expect(await listProjects()).toHaveLength(0);
+  });
+
+  it('blocks deletion while a project references the clip, then allows it after project removal', async () => {
+    await saveClip(makeClip('referenced'));
+    const project = createDefaultProject('引用素材的项目', 10);
+    project.items.push(imageItem('item-1', 'referenced'));
+    await saveProject(project);
+    await expect(deleteClip('referenced')).rejects.toBeInstanceOf(ClipReferenceError);
+    expect(await getClip('referenced')).toBeDefined();
+    await deleteProject(project.id);
+    await deleteClip('referenced');
+    expect(await getClip('referenced')).toBeUndefined();
   });
 });

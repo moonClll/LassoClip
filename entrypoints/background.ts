@@ -4,6 +4,8 @@ import { cssRectToImageRect, mapCssPointsToImage } from '../src/modules/selectio
 import { saveClip } from '../src/modules/storage/clipStore';
 import type { CaptureCompleteMessage } from '../src/types/capture';
 
+const processedCaptures = new Map<string, string>();
+
 async function startCapture(tabId: number, windowId?: number): Promise<void> {
   try {
     const dataUrl = await browser.tabs.captureVisibleTab(windowId, { format: 'png' });
@@ -49,9 +51,13 @@ export default defineBackground(() => {
     if (tab.id !== undefined) await startCapture(tab.id, tab.windowId);
   });
 
-  browser.runtime.onMessage.addListener(async (message: CaptureCompleteMessage | { type: 'capture:request' } | { type: 'editor:open' }) => {
+  browser.runtime.onMessage.addListener(async (message: CaptureCompleteMessage | { type: 'capture:request' } | { type: 'editor:open' } | { type: 'library:open' }) => {
     if (message.type === 'editor:open') {
       await browser.tabs.create({ url: browser.runtime.getURL('/editor.html') });
+      return { ok: true };
+    }
+    if (message.type === 'library:open') {
+      await browser.tabs.create({ url: browser.runtime.getURL('/library.html' as never) });
       return { ok: true };
     }
     if (message.type === 'capture:request') {
@@ -61,7 +67,12 @@ export default defineBackground(() => {
       return { ok: true };
     }
     if (message.type === 'capture:complete') {
+      if (message.captureId) {
+        const existingId = processedCaptures.get(message.captureId);
+        if (existingId) return { ok: true, clipId: existingId, duplicate: true };
+      }
       const now = Date.now();
+      const clipId = crypto.randomUUID();
       const storedSelection = {
         ...message.selection,
         coordinateSpace: 'image-px' as const,
@@ -69,9 +80,10 @@ export default defineBackground(() => {
         points: message.selection.points ? mapCssPointsToImage(message.selection.points, message.metrics) : undefined,
       };
       await saveClip({
-        id: crypto.randomUUID(),
+        id: clipId,
         name: `剪藏 ${new Date(now).toLocaleString()}`,
         imageBlob: message.imageBlob,
+        thumbnailBlob: message.thumbnailBlob,
         source: message.source,
         selection: storedSelection,
         metadata: {
@@ -84,7 +96,11 @@ export default defineBackground(() => {
         tags: [],
         favorite: false,
       });
-      return { ok: true };
+      if (message.captureId) {
+        processedCaptures.set(message.captureId, clipId);
+        setTimeout(() => processedCaptures.delete(message.captureId!), 5 * 60_000);
+      }
+      return { ok: true, clipId, duplicate: false };
     }
     return undefined;
   });

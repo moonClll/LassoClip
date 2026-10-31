@@ -27,6 +27,7 @@ kbd { margin: 0 3px; padding: 2px 5px; border: 1px solid rgba(255,255,255,.16); 
 .secondary-card small { display: block; margin-top: 3px; color: #7f89a5; font-size: 9px; }
 .arrow, .lock { color: #8b93ac; font-size: 14px; }
 .footer-row { display: flex; justify-content: space-between; margin-top: 20px; color: #747c9b; font-size: 10px; }
+.popup-studio-link { width: 100%; margin-top: 11px; padding: 8px; border: 0; color: #9aa5c1; background: transparent; font-size: 10px; cursor: pointer; }.popup-studio-link:hover { color: #ddd6fe; }.popup-studio-link span { margin-left: 4px; }
 .footer-row b { color: #c4b5fd; }
 .status { display: flex; align-items: center; gap: 5px; }
 .status i { width: 5px; height: 5px; border-radius: 50%; background: #34d399; box-shadow: 0 0 8px #34d399; }

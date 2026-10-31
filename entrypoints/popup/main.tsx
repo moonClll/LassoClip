@@ -33,6 +33,12 @@ function Popup(): React.JSX.Element {
     }
   };
 
+  const openLibrary = async (): Promise<void> => {
+    setStatus('正在打开 Clip Library…');
+    try { await browser.runtime.sendMessage({ type: 'library:open' }); window.close(); }
+    catch (error) { setStatus(error instanceof Error ? error.message : '素材库暂不可用'); }
+  };
+
   return (
     <main className="popup-shell">
       <header className="brand-row">
@@ -48,8 +54,9 @@ function Popup(): React.JSX.Element {
       </section>
       <section className="quick-grid">
         <button className="secondary-card" onClick={() => void startCapture()}><span className="card-icon purple">✦</span><span><b>Quick Clip</b><small>快速生成透明 PNG</small></span><span className="arrow">↗</span></button>
-        <button className="secondary-card" onClick={() => void openEditor()}><span className="card-icon blue">▦</span><span><b>Clip Board</b><small>打开 Clip Studio</small></span><span className="arrow">↗</span></button>
+        <button className="secondary-card" onClick={() => void openLibrary()}><span className="card-icon blue">▦</span><span><b>Clip Library</b><small>浏览全部素材</small></span><span className="arrow">↗</span></button>
       </section>
+      <button className="popup-studio-link" onClick={() => void openEditor()}>直接打开 Clip Studio <span>↗</span></button>
       <footer className="footer-row"><span>本地素材 <b>{recentCount}</b></span><span className="status"><i /> {status}</span></footer>
     </main>
   );

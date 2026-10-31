@@ -1,15 +1,15 @@
 import { create } from 'zustand';
 import { autoLayoutItems } from '../modules/canvas-editor/autoLayout';
-import { reorderItems } from '../modules/canvas-editor/transform';
-import { createDefaultProject, type CanvasItem, type ClipProject, type ImageCanvasItem } from '../types/editor';
-import type { ClipItemRecord } from '../types/capture';
-import { createProject, listClips, listProjects, loadProjectWithClips, saveProject } from '../modules/storage/clipStore';
+import { reorderProjectLayers } from '../modules/canvas-editor/transform';
+import { annotationSelectionId, createDefaultProject, entityIdFromSelection, isAnnotationSelectionId, isRedactionSelectionId, redactionSelectionId, type Annotation, type AnnotationDraft, type CanvasItem, type ClipProject, type ImageCanvasItem, type ProjectLayer, type Redaction } from '../types/editor';
+import type { ClipItemSummary } from '../types/capture';
+import { createProject, listClipSummaries, listProjects, loadProjectWithClips, saveProject } from '../modules/storage/clipStore';
 
 type EditorStatus = 'idle' | 'loading' | 'ready' | 'saving' | 'error';
 
 interface EditorState {
   project: ClipProject | null;
-  clips: ClipItemRecord[];
+  clips: ClipItemSummary[];
   selectedIds: string[];
   status: EditorStatus;
   error: string | null;
@@ -18,10 +18,17 @@ interface EditorState {
   load: (projectId?: string) => Promise<void>;
   createNew: () => Promise<void>;
   save: () => Promise<void>;
-  addClip: (clip: ClipItemRecord) => void;
+  addClip: (clip: ClipItemSummary) => void;
   removeSelected: () => void;
   duplicateSelected: () => void;
+  addAnnotation: (annotation: AnnotationDraft) => void;
+  addRedaction: (redaction: Omit<Redaction, 'id' | 'zIndex'>) => void;
+  updateAnnotation: (id: string, patch: Partial<Annotation>) => void;
+  updateAnnotations: (updates: Array<{ id: string; patch: Partial<Annotation> }>) => void;
+  updateRedaction: (id: string, patch: Partial<Redaction>) => void;
+  updateRedactions: (updates: Array<{ id: string; patch: Partial<Redaction> }>) => void;
   updateItem: (id: string, transform: Partial<CanvasItem['transform']>) => void;
+  updateItemStyle: (id: string, style: Partial<Extract<CanvasItem, { type: 'image' }>['style']>) => void;
   updateItems: (updates: Array<{ id: string; transform: Partial<CanvasItem['transform']> }>) => void;
   select: (ids: string[]) => void;
   setViewport: (zoom: number, pan: { x: number; y: number }) => void;
@@ -44,7 +51,7 @@ function commit(current: ClipProject, next: ClipProject, history: ClipProject[],
   };
 }
 
-function createImageItem(clip: ClipItemRecord, index: number): ImageCanvasItem {
+function createImageItem(clip: ClipItemSummary, index: number): ImageCanvasItem {
   const maxWidth = 280;
   const width = Math.min(maxWidth, Math.max(1, clip.metadata.width));
   const height = Math.max(1, Math.round(width * (clip.metadata.height / Math.max(1, clip.metadata.width))));
@@ -78,13 +85,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (targetId) {
         const loaded = await loadProjectWithClips(targetId);
         if (loaded) {
-          set({ project: loaded.project, clips: await listClips(), selectedIds: [], history: [], future: [], status: 'ready' });
+          set({ project: loaded.project, clips: await listClipSummaries(), selectedIds: [], history: [], future: [], status: 'ready' });
           return;
         }
       }
       const project = createDefaultProject();
       await createProject(project);
-      set({ project, clips: await listClips(), selectedIds: [], history: [], future: [], status: 'ready' });
+      set({ project, clips: await listClipSummaries(), selectedIds: [], history: [], future: [], status: 'ready' });
     } catch (error) {
       set({ status: 'error', error: error instanceof Error ? error.message : '项目加载失败' });
     }
@@ -95,7 +102,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const project = createDefaultProject();
       await createProject(project);
-      set({ project, clips: await listClips(), selectedIds: [], history: [], future: [], status: 'ready' });
+      set({ project, clips: await listClipSummaries(), selectedIds: [], history: [], future: [], status: 'ready' });
     } catch (error) {
       set({ status: 'error', error: error instanceof Error ? error.message : '项目创建失败' });
     }
@@ -126,22 +133,78 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   removeSelected: () => {
     const { project, selectedIds, history, future } = get();
     if (!project || selectedIds.length === 0) return;
-    const next = commit(project, { ...project, items: project.items.filter((item) => !selectedIds.includes(item.id)) }, history, future);
+    const rawIds = new Set(selectedIds.map(entityIdFromSelection));
+    const next = commit(project, { ...project, items: project.items.filter((item) => !rawIds.has(item.id)), annotations: project.annotations.filter((annotation) => !rawIds.has(annotation.id)), redactions: project.redactions.filter((redaction) => !rawIds.has(redaction.id)) }, history, future);
     set({ ...next, selectedIds: [] });
   },
 
   duplicateSelected: () => {
     const { project, selectedIds, history, future } = get();
     if (!project) return;
-    const selected = project.items.filter((item) => selectedIds.includes(item.id));
-    if (selected.length === 0) return;
-    const duplicates = selected.map((item, index) => ({ ...item, id: crypto.randomUUID(), zIndex: project.items.length + index, transform: { ...item.transform, x: item.transform.x + 24, y: item.transform.y + 24 } }));
-    const next = commit(project, { ...project, items: [...project.items, ...duplicates] }, history, future);
-    set({ ...next, selectedIds: duplicates.map((item) => item.id) });
+    const rawIds = new Set(selectedIds.map(entityIdFromSelection));
+    const selectedItems = project.items.filter((item) => rawIds.has(item.id));
+    const selectedAnnotations = project.annotations.filter((annotation) => rawIds.has(annotation.id));
+    const selectedRedactions = project.redactions.filter((redaction) => rawIds.has(redaction.id));
+    if (selectedItems.length + selectedAnnotations.length + selectedRedactions.length === 0) return;
+    const layerCount = project.items.length + project.annotations.length + project.redactions.length;
+    const duplicate = <T extends ProjectLayer>(layer: T, index: number): T => ({ ...layer, id: crypto.randomUUID(), zIndex: layerCount + index, transform: { ...layer.transform, x: layer.transform.x + 24, y: layer.transform.y + 24 } } as T);
+    const duplicateItems = selectedItems.map((item, index) => duplicate(item, index));
+    const duplicateAnnotations = selectedAnnotations.map((annotation, index) => duplicate(annotation, selectedItems.length + index));
+    const duplicateRedactions = selectedRedactions.map((redaction, index) => duplicate(redaction, selectedItems.length + selectedAnnotations.length + index));
+    const nextProject = { ...project, items: [...project.items, ...duplicateItems], annotations: [...project.annotations, ...duplicateAnnotations], redactions: [...project.redactions, ...duplicateRedactions] };
+    const next = commit(project, nextProject, history, future);
+    set({ ...next, selectedIds: [...duplicateItems.map((item) => item.id), ...duplicateAnnotations.map((annotation) => annotationSelectionId(annotation.id)), ...duplicateRedactions.map((redaction) => redactionSelectionId(redaction.id))] });
+  },
+
+  addAnnotation: (annotation) => {
+    const { project, history, future } = get();
+    if (!project) return;
+    const nextAnnotation = { ...annotation, id: crypto.randomUUID(), zIndex: [...project.items, ...project.annotations, ...project.redactions].length } as Annotation;
+    const next = commit(project, { ...project, annotations: [...project.annotations, nextAnnotation] }, history, future);
+    set({ ...next, selectedIds: [annotationSelectionId(nextAnnotation.id)] });
+  },
+
+  addRedaction: (redaction) => {
+    const { project, history, future } = get();
+    if (!project) return;
+    const nextRedaction = { ...redaction, id: crypto.randomUUID(), zIndex: [...project.items, ...project.annotations, ...project.redactions].length } as Redaction;
+    const next = commit(project, { ...project, redactions: [...project.redactions, nextRedaction] }, history, future);
+    set({ ...next, selectedIds: [redactionSelectionId(nextRedaction.id)] });
+  },
+
+  updateAnnotation: (id, patch) => {
+    get().updateAnnotations([{ id, patch }]);
+  },
+
+  updateAnnotations: (updates) => {
+    const { project, history, future } = get();
+    if (!project || updates.length === 0) return;
+    const updateMap = new Map(updates.map((update) => [update.id, update.patch]));
+    const next = commit(project, { ...project, annotations: project.annotations.map((annotation) => updateMap.has(annotation.id) ? { ...annotation, ...updateMap.get(annotation.id) } as Annotation : annotation) }, history, future);
+    set(next);
+  },
+
+  updateRedaction: (id, patch) => {
+    get().updateRedactions([{ id, patch }]);
+  },
+
+  updateRedactions: (updates) => {
+    const { project, history, future } = get();
+    if (!project || updates.length === 0) return;
+    const updateMap = new Map(updates.map((update) => [update.id, update.patch]));
+    const next = commit(project, { ...project, redactions: project.redactions.map((redaction) => updateMap.has(redaction.id) ? { ...redaction, ...updateMap.get(redaction.id) } as Redaction : redaction) }, history, future);
+    set(next);
   },
 
   updateItem: (id, transform) => {
     get().updateItems([{ id, transform }]);
+  },
+
+  updateItemStyle: (id, style) => {
+    const { project, history, future } = get();
+    if (!project) return;
+    const next = commit(project, { ...project, items: project.items.map((item) => item.id === id && item.type === 'image' ? { ...item, style: { ...item.style, ...style } } : item) }, history, future);
+    set(next);
   },
 
   updateItems: (updates) => {
@@ -164,28 +227,31 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   reorder: (direction) => {
     const { project, selectedIds, history, future } = get();
     if (!project || selectedIds.length === 0) return;
-    const next = commit(project, { ...project, items: reorderItems(project.items, selectedIds, direction) }, history, future);
+    const layers = reorderProjectLayers([...project.items, ...project.annotations, ...project.redactions], selectedIds.map(entityIdFromSelection), direction);
+    const itemIds = new Set(project.items.map((item) => item.id));
+    const annotationIds = new Set(project.annotations.map((annotation) => annotation.id));
+    const next = commit(project, { ...project, items: layers.filter((layer): layer is CanvasItem => itemIds.has(layer.id)), annotations: layers.filter((layer): layer is Annotation => annotationIds.has(layer.id)), redactions: layers.filter((layer): layer is Redaction => !itemIds.has(layer.id) && !annotationIds.has(layer.id)) }, history, future);
     set(next);
   },
 
   setItemVisibility: (id, visible) => {
     const { project, history, future } = get();
     if (!project) return;
-    const next = commit(project, { ...project, items: project.items.map((item) => item.id === id ? { ...item, visible } : item) }, history, future);
+    const next = commit(project, { ...project, items: project.items.map((item) => item.id === id ? { ...item, visible } : item), annotations: project.annotations.map((annotation) => annotation.id === id ? { ...annotation, visible } : annotation), redactions: project.redactions.map((redaction) => redaction.id === id ? { ...redaction, visible } : redaction) }, history, future);
     set(next);
   },
 
   setItemLocked: (id, locked) => {
     const { project, history, future } = get();
     if (!project) return;
-    const next = commit(project, { ...project, items: project.items.map((item) => item.id === id ? { ...item, locked } : item) }, history, future);
+    const next = commit(project, { ...project, items: project.items.map((item) => item.id === id ? { ...item, locked } : item), annotations: project.annotations.map((annotation) => annotation.id === id ? { ...annotation, locked } : annotation), redactions: project.redactions.map((redaction) => redaction.id === id ? { ...redaction, locked } : redaction) }, history, future);
     set({ ...next, selectedIds: locked ? get().selectedIds.filter((selectedId) => selectedId !== id) : get().selectedIds });
   },
 
   renameItem: (id, name) => {
     const { project, history, future } = get();
     if (!project || !name.trim()) return;
-    const next = commit(project, { ...project, items: project.items.map((item) => item.id === id ? { ...item, name: name.trim() } : item) }, history, future);
+    const next = commit(project, { ...project, items: project.items.map((item) => item.id === id ? { ...item, name: name.trim() } : item), annotations: project.annotations.map((annotation) => annotation.id === id ? { ...annotation, name: name.trim() } : annotation), redactions: project.redactions.map((redaction) => redaction.id === id ? { ...redaction, name: name.trim() } : redaction) }, history, future);
     set(next);
   },
 
@@ -226,5 +292,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 }));
 
 export function selectedItem(project: ClipProject | null, selectedIds: string[]): CanvasItem | undefined {
-  return project?.items.find((item) => item.id === selectedIds[0]);
+  return project?.items.find((item) => selectedIds.includes(item.id));
+}
+
+export function selectedEntity(project: ClipProject | null, selectedIds: string[]): ProjectLayer | undefined {
+  if (!project) return undefined;
+  const id = selectedIds[0];
+  if (isAnnotationSelectionId(id)) return project.annotations.find((annotation) => annotation.id === entityIdFromSelection(id));
+  if (isRedactionSelectionId(id)) return project.redactions.find((redaction) => redaction.id === entityIdFromSelection(id));
+  return project.items.find((item) => item.id === id);
 }

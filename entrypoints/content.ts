@@ -1,6 +1,6 @@
 import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
-import { canvasToBlob, cropCanvasByCssSelection, imageToCanvas, loadImage } from '../src/modules/image-processing/canvas';
+import { canvasToBlob, canvasToThumbnailBlob, cropCanvasByCssSelection, imageToCanvas, loadImage } from '../src/modules/image-processing/canvas';
 import { createViewportMetrics } from '../src/modules/selection/coordinates';
 import { normalizeRect, rectFromPoints } from '../src/modules/selection/geometry';
 import { resizeSelection, translateSelection } from '../src/modules/selection/transforms';
@@ -28,6 +28,8 @@ const css = `
 .toolbar .cancel { background: rgba(248,113,113,.16); color: #fecaca; }
 .hint { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 13px; border: 1px solid rgba(255,255,255,.12); border-radius: 999px; background: rgba(15,23,42,.78); color: #cbd5e1; font-size: 12px; }
 .toast { position: absolute; right: 20px; bottom: 20px; padding: 10px 14px; border-radius: 10px; background: #0f172a; color: #f8fafc; box-shadow: 0 12px 30px rgba(0,0,0,.3); font-size: 13px; }
+.success-actions { position: absolute; right: 20px; bottom: 20px; display: flex; align-items: center; gap: 7px; padding: 9px; border: 1px solid rgba(196,181,253,.25); border-radius: 12px; background: rgba(15,23,42,.94); box-shadow: 0 12px 30px rgba(0,0,0,.35); }
+.success-actions span { margin-right: 4px; color: #cbd5e1; font-size: 12px; }.success-actions button { padding: 7px 9px; border: 0; border-radius: 7px; color: #ede9fe; background: rgba(124,58,237,.34); cursor: pointer; font-size: 11px; }.success-actions button:hover { background: rgba(124,58,237,.56); }.success-actions .dismiss { color: #94a3b8; background: transparent; }
 `;
 
 function pointFromEvent(event: PointerEvent, canvas: HTMLCanvasElement): Point {
@@ -57,6 +59,7 @@ function normalizeShapeRect(start: Point, end: Point, keepSquare: boolean): Rect
 }
 
 class CaptureOverlay {
+  private readonly captureId = crypto.randomUUID();
   private readonly host: HTMLDivElement;
   private readonly root: ShadowRoot;
   private readonly canvas: HTMLCanvasElement;
@@ -64,6 +67,7 @@ class CaptureOverlay {
   private readonly toolbar: HTMLDivElement;
   private readonly hint: HTMLDivElement;
   private readonly toast: HTMLDivElement;
+  private readonly shell: HTMLDivElement;
   private readonly magnifier: HTMLDivElement;
   private readonly magnifierCanvas: HTMLCanvasElement;
   private readonly magnifierCtx: CanvasRenderingContext2D;
@@ -91,6 +95,7 @@ class CaptureOverlay {
     this.root.append(style);
     const shell = document.createElement('div');
     shell.className = 'shell';
+    this.shell = shell;
     const stage = document.createElement('div');
     stage.className = 'stage';
     this.image = document.createElement('img');
@@ -424,6 +429,18 @@ class CaptureOverlay {
     window.setTimeout(() => { this.toast.hidden = true; }, 1800);
   }
 
+  private showSuccessActions(): void {
+    const actions = document.createElement('div');
+    actions.className = 'success-actions';
+    const label = document.createElement('span'); label.textContent = '剪藏已保存';
+    const library = document.createElement('button'); library.textContent = '打开 Library';
+    library.addEventListener('click', () => { void browser.runtime.sendMessage({ type: 'library:open' }); this.close(); });
+    const studio = document.createElement('button'); studio.textContent = '进入 Studio';
+    studio.addEventListener('click', () => { void browser.runtime.sendMessage({ type: 'editor:open' }); this.close(); });
+    const dismiss = document.createElement('button'); dismiss.className = 'dismiss'; dismiss.textContent = '关闭'; dismiss.addEventListener('click', () => this.close());
+    actions.append(label, library, studio, dismiss); this.shell.append(actions);
+  }
+
   private async confirm(): Promise<void> {
     const selection = this.selection;
     if (!selection || selection.bounds.width < 1 || selection.bounds.height < 1) {
@@ -438,12 +455,13 @@ class CaptureOverlay {
       const sourceCanvas = imageToCanvas(this.sourceImage, this.sourceImage.naturalWidth, this.sourceImage.naturalHeight);
       const cropped = cropCanvasByCssSelection(sourceCanvas, selection, metrics);
       const blob = await canvasToBlob(cropped.canvas, 'image/png');
+      const thumbnailBlob = await canvasToThumbnailBlob(cropped.canvas);
       const source: ClipSource = { url: location.href, title: document.title, domain: location.hostname, capturedAt: this.data.capturedAt, elementText: this.candidateElement?.textContent?.trim().slice(0, 500) || undefined };
-      await browser.runtime.sendMessage({ type: 'capture:complete', imageBlob: blob, selection, metrics, source });
+      await browser.runtime.sendMessage({ type: 'capture:complete', captureId: this.captureId, imageBlob: blob, thumbnailBlob, selection, metrics, source });
       let copied = true;
       try { await copyPngToClipboard(blob); } catch { copied = false; }
       this.showToast(copied ? '已复制 PNG，并保存到本地' : '已保存 PNG，但剪贴板复制失败');
-      window.setTimeout(() => this.close(), 850);
+      this.showSuccessActions();
     } catch (error) {
       this.showToast(error instanceof Error ? error.message : '截图处理失败');
       this.canvas.style.pointerEvents = 'auto';

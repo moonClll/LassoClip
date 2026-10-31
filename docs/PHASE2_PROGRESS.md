@@ -1,6 +1,6 @@
 # Phase 2 开发进度
 
-本轮完成 Phase 2.1（数据模型与持久化）、Phase 2.2（Clip Studio 编辑器框架）和 Phase 2.3（画布交互完善）。未提前实现完整标注工具、敏感信息遮挡、OCR、标签或 AI 能力。
+本轮完成 Phase 2.1（数据模型与持久化）、Phase 2.2（Clip Studio 编辑器框架）、Phase 2.3（画布交互完善）和 Phase 2.4（标注与视觉编辑系统）。未提前实现 OCR、标签或 AI 能力。
 
 ## 已完成内容
 
@@ -61,7 +61,85 @@
 - 项目名称目前由默认名称生成，右侧没有名称编辑控件；后续可在 Inspector 或顶部项目菜单补充。
 - 现有 ClipItem 的 `imageBlob` 在 fake-indexeddb + jsdom 测试中会被表示为跨 realm 的普通对象，测试验证字段保留；真实 Chrome IndexedDB Blob 行为仍需手工验证。
 
-下一步应先完成真实 Chrome 手工验收，再进入后续标注、遮挡导出和编辑器精修阶段。
+下一步应先完成真实 Chrome 手工验收，再进入编辑器视觉精修和更完整导出能力阶段。
+
+## Phase 2.4：标注与视觉编辑系统
+
+### 已完成
+
+- 扩展 `src/types/editor.ts`：标注统一使用独立 `Annotation` 记录和 `CanvasTransform`，支持文字、箭头、直线、矩形、椭圆、自由画笔和高亮；新增独立 `Redaction` 记录，类型为 `blur`、`pixelate`、`solid`。
+- 项目 schemaVersion 升至 2；`normalizeProject` 会为既有 IndexedDB v2 项目补齐 `redactions: []`，原有 ClipItem、ClipProject 和图片 Blob 不变。
+- 工具栏接入真实标注工具。画布拖拽创建形状、线条、箭头、画笔、高亮和矩形遮挡；文字工具通过输入框创建文字标注。
+- 标注和遮挡作为独立图层参与选择、移动、缩放、旋转、复制、删除、锁定、可见性、重命名、排序、Undo/Redo 和自动保存。
+- Inspector 支持标注位置/尺寸/旋转/透明度、文字字号/颜色、线条颜色/线宽、遮挡颜色/模糊半径/像素大小；图片支持圆角、外边距和样式预设。
+- 新增原生 Canvas 导出管线 `src/modules/canvas-editor/export.ts`：按 zIndex 合成画布背景、图片、标注和遮挡；Blur、Pixelate、Solid Mask 均写入最终像素，导出结果不依赖 Konva 控制层，原始 ClipItem Blob 不会被修改。
+- 支持纯色与默认线性渐变画布背景，导出与预览均可使用。
+
+### 验证结果
+
+- `npm run compile`：通过。
+- `npm test`：通过，8 个测试文件、27 个测试。
+- `npm run build`：通过，WXT 生成 Chrome MV3 Editor bundle（约 373 kB）。
+- 新增 `tests/annotation-model.test.ts`：标注/遮挡独立数据、schema 兼容和选择 ID。
+- 新增 `tests/export-redaction.test.ts`：Solid Mask 像素写入路径和三种遮挡类型区分。
+
+### 遗留问题
+
+- 当前环境没有真实 Chrome 扩展会话；需要人工验证文字输入、画笔连续点、Transformer 旋转、遮挡导出像素和渐变背景。
+- Blur/Pixelate 导出使用浏览器 Canvas 2D 离屏合成，尚未加入大尺寸项目的性能基准。
+- 图片阴影/边框的 Inspector 目前通过样式预设设置，细粒度颜色和参数编辑可在后续视觉精修阶段补充。
+- 标注的文字编辑目前采用创建时输入，后续可增加画布内双击编辑。
+
+## Phase 2.4 真实环境验收审查
+
+### 当前代码审查结论
+
+| 验收项 | 代码状态 | 当前环境证据 |
+| --- | --- | --- |
+| 文字输入 | 已实现 | 工具栏文字工具通过 `window.prompt` 创建独立文字标注；需 Chrome 手测输入法和长文本换行 |
+| 连续画笔 | 已实现 | Stage 持续采样 pointer 点并在 pointerup 一次性保存；需 Chrome 手测快速移动和离开画布 |
+| 旋转导出 | 已实现 | 图片、标注和遮挡均保存 rotation；Canvas 导出按对象变换合成 |
+| 渐变背景 | 已实现 | Konva 预览和 Canvas 导出均使用线性渐变 |
+| Blur / Pixelate / Solid | 已实现 | `applyRedaction` 在扁平像素上执行三种处理；源 ClipItem 不参与写入 |
+| 大尺寸画布 | 已防护 | 导出尺寸限制为 16384 边长和约 268MP，并自动降低基础渲染 scale；浏览器真实耗时仍需手测 |
+| 原始 ClipItem | 已保持不变 | 导出只读取 Blob，项目只保存 clipId；现有 IndexedDB 迁移测试继续通过 |
+
+### 真实 Chrome 手动测试清单
+
+1. 加载 `.output/chrome-mv3`，打开 Clip Studio，导入至少两张真实剪藏素材。
+2. 选择文字工具，在空白处和素材上分别点击，输入中文、英文和多行文字；确认图层、撤销、刷新恢复正常。
+3. 连续绘制画笔和高亮，包含快速短线、长线、反向拖动和画布边缘；确认只生成一个历史步骤。
+4. 创建箭头、直线、矩形、椭圆，执行移动、八方向缩放、旋转、复制、锁定和图层排序。
+5. 创建 Blur、Pixelate、Solid Mask，分别移动、缩放、旋转并导出 PNG；放大导出图检查遮挡区域没有可读原文残留。
+6. 设置渐变背景和图片圆角、阴影、边框，分别导出 PNG、JPG、WebP，比较预览和文件像素。
+7. 测试 1x、2x、3x、透明背景、JPG 背景色、质量滑块、自定义尺寸和宽高比锁定。
+8. 使用“复制 PNG”，在图片编辑器或文档中粘贴，检查 Alpha、旋转、标注和遮挡结果。
+9. 使用 4000×4000 以上画布和多个素材，记录预览、导出耗时和浏览器内存；验证超限尺寸提示或自动缩小。
+10. 导出后重新打开项目，确认 ClipItem Blob、项目图层和遮挡记录仍可恢复。
+
+## Phase 2.5：专业导出系统
+
+### 已完成
+
+- 复用 `src/modules/canvas-editor/export.ts`，新增 PNG、JPG、WebP MIME 输出。
+- 支持 1x、2x、3x；支持自定义宽高，导出尺寸经过浏览器 Canvas 边长和面积上限保护。
+- 支持宽高比锁定、透明背景、指定背景色和 JPG/WebP 质量控制。
+- 新增导出预览对话框，预览使用同一份 Canvas 合成结果；支持自定义文件名。
+- 支持一键复制 PNG 到剪贴板，失败时在对话框显示明确错误。
+- 导出顺序继续按 zIndex 处理图片、标注和遮挡，保留旋转、圆角、阴影、边框、渐变和安全遮挡。
+- PDF / Markdown 方案：PDF 后续使用离屏 PNG 页面拼接并由独立适配器调用；Markdown 输出图片文件链接、项目名、备注和来源 URL，暂不在本轮实现。
+
+### 自动化验证
+
+- `tests/export-redaction.test.ts` 覆盖 Solid Mask 写入路径、遮挡类型和大尺寸导出限制。
+- `tests/annotation-model.test.ts` 覆盖标注/遮挡独立持久化模型和旧项目补字段。
+- `npm run compile`、`npm test`、`npm run build` 作为本轮交付门禁。
+
+### 遗留问题
+
+- 当前无原生浏览器 Canvas 运行会话，无法在本地自动读取真实 PNG/JPG/WebP 像素和测量 Chrome 内存；上述项目列出的 Chrome 手测清单必须执行。
+- 导出预览在每次参数变化后重新合成，超大画布可进一步加入缩略图预览和任务进度。
+- PDF 与 Markdown 仅完成技术方案，等待后续导出适配器阶段。
 
 ## Phase 2.3：画布交互完善
 
@@ -78,7 +156,7 @@
 ### 新增验证
 
 - `tests/editor-transform.test.ts`：最小尺寸/旋转/透明度归一化、画布与边缘吸附、图层排序和多选边界计算。
-- 当前自动化门禁：`npm run compile` 通过；`npm test` 通过（6 个测试文件、22 个测试）。
+- 当前自动化门禁：`npm run compile` 通过；`npm test` 通过（8 个测试文件、27 个测试）。
 - `npm run build`：通过，WXT 生成 Editor bundle（约 355 kB）及完整 Chrome MV3 扩展产物。
 
 ### 仍待后续

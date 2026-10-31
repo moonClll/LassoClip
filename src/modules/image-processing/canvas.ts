@@ -77,6 +77,18 @@ export function canvasToBlob(canvas: HTMLCanvasElement, type = 'image/png', qual
   });
 }
 
+/** Creates a bounded thumbnail without mutating the source canvas or image Blob. */
+export async function canvasToThumbnailBlob(canvas: HTMLCanvasElement, maxDimension = 320): Promise<Blob> {
+  const scale = Math.min(1, maxDimension / Math.max(canvas.width, canvas.height));
+  const target = document.createElement('canvas');
+  target.width = Math.max(1, Math.round(canvas.width * scale));
+  target.height = Math.max(1, Math.round(canvas.height * scale));
+  const context = target.getContext('2d');
+  if (!context) throw new Error('Canvas 2D context is unavailable');
+  context.drawImage(canvas, 0, 0, target.width, target.height);
+  return canvasToBlob(target, 'image/webp', 0.82);
+}
+
 export async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   const image = new Image();
   image.decoding = 'async';

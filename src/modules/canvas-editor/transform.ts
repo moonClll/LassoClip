@@ -1,4 +1,4 @@
-import type { CanvasItem, CanvasTransform } from '../../types/editor';
+import type { CanvasItem, CanvasTransform, ProjectLayer } from '../../types/editor';
 
 export const MIN_ITEM_SIZE = 24;
 
@@ -126,4 +126,27 @@ export function reorderItems(items: CanvasItem[], selectedIds: string[], directi
     }
   }
   return result.map((item, index) => ({ ...item, zIndex: index }));
+}
+
+export function reorderProjectLayers(layers: ProjectLayer[], selectedIds: string[], direction: 'up' | 'down' | 'top' | 'bottom'): ProjectLayer[] {
+  const selected = new Set(selectedIds);
+  const ordered = [...layers].sort((a, b) => a.zIndex - b.zIndex);
+  const moving = ordered.filter((layer) => selected.has(layer.id));
+  if (!moving.length) return layers;
+  const stationary = ordered.filter((layer) => !selected.has(layer.id));
+  let result: ProjectLayer[];
+  if (direction === 'top') result = [...stationary, ...moving];
+  else if (direction === 'bottom') result = [...moving, ...stationary];
+  else {
+    result = [...ordered];
+    const step = direction === 'up' ? 1 : -1;
+    const indexes = direction === 'up' ? [...result.keys()].reverse() : [...result.keys()];
+    for (const index of indexes) {
+      if (!selected.has(result[index].id)) continue;
+      const target = index + step;
+      if (target < 0 || target >= result.length || selected.has(result[target].id)) continue;
+      [result[index], result[target]] = [result[target], result[index]];
+    }
+  }
+  return result.map((layer, index) => ({ ...layer, zIndex: index }));
 }
