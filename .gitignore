@@ -1,0 +1,15 @@
+node_modules
+.output
+.wxt
+dist
+coverage
+*.zip
+.env
+.env.*
+!.env.example
+*.log
+*.crx
+*.pem
+*.key
+.DS_Store
+Thumbs.db
