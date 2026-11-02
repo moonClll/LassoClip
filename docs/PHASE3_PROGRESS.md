@@ -188,3 +188,80 @@
 - fake-indexeddb 对 Blob 的 `size` 表现不完全等同 Chrome，字节统计需要在真实浏览器中复核。
 - 旧素材缩略图在首次展示时生成，首次访问仍可能短暂读取原图；生成后会持久化并进入缓存。
 - 版本化 ZIP 备份与恢复系统尚未开始，留待 Phase 3.4 第二轮。
+
+## Phase 3.4 · Performance & Storage（第二轮：Backup & Recovery）
+
+### 备份格式
+
+- IndexedDB 从 v4 安全升级到 v5。v5 新增 `restoreMeta`、`restoreClips`、`restoreClipBlobs`、`restoreProjects`、`restoreTags`、`restoreCollections` 暂存 object store；原有五个主 store 和 v3/v4 数据迁移逻辑保持不变。
+- 备份使用版本化 ZIP（Backup Format v1），不把图片转成 Base64。ZIP 使用无压缩 Store 条目，图片按单个 Blob 读取并写入，避免一次性加载整个素材库。
+- 文件布局：`manifest.json`、`clips/{id}.json`、`blobs/{id}/original`、`blobs/{id}/thumbnail`、`projects/{id}.json`、`tags/{id}.json`、`collections/{id}.json`。
+- Manifest 包含备份时间、应用版本、Schema 版本、素材/项目/标签/Collection/Blob 数量，以及每个文件的路径、类型、ID、字节数、MIME 和 SHA-256。恢复前先验证格式、版本、路径和数量，再逐文件验证大小与 SHA-256。
+
+### 恢复安全机制
+
+- Full Restore 开始前先生成当前数据库的安全备份 Blob；解压、解析、校验和写入 staging 均使用短事务，不在长时间异步 ZIP 读取期间持有 IndexedDB 事务。
+- 所有文件通过校验后才进入单个提交事务。提交事务清空主 `clips`、`clipBlobs`、`projects`、`tags`、`collections`，再从 staging 游标逐条复制；任意错误会触发事务 abort，主数据保持原状。
+- 取消、版本不兼容、文件缺失、SHA-256 不匹配和引用失效都会在提交前清理 staging 并拒绝恢复；不会自动删除用户原始素材。
+- 恢复后验证项目图片图层和 Collection 成员/封面引用的 Clip ID 均存在；恢复只引用 ClipItem ID，不复制图片到项目或 Collection。
+- Merge Restore 本轮只完成设计：需要为 ClipItem、Project、Tag、Collection 建立旧 ID → 新 ID 映射，并同步重写项目图层、Collection 成员和封面引用；在缺少完整事务合并策略前暂不实现，避免产生半合并数据。
+
+### UI 与文件变更
+
+- 新增独立 `data.html` Data Management 页面：Export Backup、ZIP 预览（版本/数量/时间）、Full Restore、取消、Storage Usage、Integrity Check 和安全 Collection 修复入口。
+- Library 顶部增加“数据管理”入口；页面使用现有深色渐变、卡片和按钮视觉体系。
+- 新增 `src/modules/backup/zip.ts`（CRC32、ZIP Store 写入/解析、Blob 分块读取、SHA-256）、`src/modules/backup/backupService.ts`（Manifest、导出、预览、Full Restore）和 `src/modules/storage/restoreStore.ts`（staging 与原子提交）。
+
+### 自动化验证
+
+- 新增 `tests/backup.test.ts`，覆盖：版本化 ZIP 与 Manifest、原图/缩略图文件、SHA-256 字段、项目 Annotation/Redaction、Tag/Collection 关联、完整恢复、当前数据替换、损坏备份拒绝及失败后原数据保留。
+- `npm run compile`：通过。
+- `npm test`：通过，13 个测试文件、45 个测试。
+- `npm run build`：通过；生成 `data.html`、`editor.html`、`library.html`、`popup.html` 及 MV3 Background/Content Script 产物。
+
+### 真实 Chrome 手动验收清单
+
+1. 在已有 v4 数据上打开 Data Management，确认 Storage Usage、素材/项目数量和 Integrity Check 可读，原有 Library/Studio 数据不变。
+2. 导出 ZIP，使用系统解压工具确认包含 `manifest.json`、`clips`、`blobs`、`projects`、`tags`、`collections`，图片文件不是 JSON Base64；检查 Manifest 中 SHA-256 和数量。
+3. 选择导出的 ZIP，确认恢复前预览数量、Schema 和时间；执行 Full Restore，观察进度后刷新 Library、Projects 和 Studio，确认图片、缩略图、标签、Collection、Annotation、Redaction 与原状态一致。
+4. 在 ZIP 中替换或修改一个 Blob 后恢复，确认校验失败且现有素材库仍完整；恢复中点击取消，确认没有半恢复状态。
+5. 在恢复前创建一个额外素材，执行恢复后确认它被备份前数据替换；检查恢复过程中的安全备份可用于后续恢复。
+6. 使用大尺寸图片和 100/500/1000 素材规模导出/恢复，观察页面响应、内存峰值、进度更新和 Blob URL 是否正常释放。
+
+### 遗留问题
+
+- 当前 ZIP 使用 Store（无压缩）格式以优先保证流式分块和稳定性；后续可增加 Deflate 读取/写入，但不能改变 Manifest 校验协议。
+- 恢复服务生成的安全备份现在由 Data Management 页面在提交恢复前自动下载为 `*-before-restore.zip`；后续可再增加备份历史列表和保留策略。
+- Merge Restore 只完成 ID 映射与引用重写设计，尚未开放 UI。
+- 真实 Chrome 的超大 Blob 内存峰值、磁盘配额和恢复耗时仍需按清单手动测量。
+## Phase 4.1.1：Clip Board / Continuous Capture Mode
+
+### 已完成
+
+- Clip Studio 顶部增加“剪藏到此项目”入口，可启动或退出 Project Capture Mode。
+- 项目上下文通过 `browser.storage.local` 持久化，包含 `projectId`、独立 `sessionId`、启动时间和 24 小时 TTL，并按浏览器 `windowId` 隔离；Service Worker 挂起后可恢复，过期上下文会自动清理。
+- Background 在每次截图启动时验证目标项目并把上下文传给 Capture Overlay；截图完成时再次校验 sessionId，模式退出或切换后不会静默写入其他项目。
+- 每次截图先保存 ClipItem，再调用现有 `addClipsToProject` 自动排版并以 ClipItem ID 建立引用。目标项目被删除时素材仍保留在 Library，并明确提示用户。
+- Capture Overlay 在项目模式下提供“继续截图 / 打开项目 / 退出模式”，Popup 显示当前剪藏目标与退出入口。
+- captureId 账本同时保存到扩展本地存储并带 10 分钟清理窗口，补足 Service Worker 重启后的重复投递保护；IndexedDB v5 未升级。
+
+### 自动化验证
+
+- `tests/project-capture.test.ts` 覆盖上下文 TTL、session 隔离、连续保存与项目关联、项目失效降级、重复项目图层去重和 capture ledger 清理。
+- `npm run compile`：通过。
+- `npm test`：通过，14 个测试文件、50 个测试。
+- `npm run build`：通过，生成 `data.html`、`editor.html`、`library.html`、`popup.html` 及 MV3 Background/Content Script 产物。
+
+### 待真实 Chrome 验收
+
+- Studio 启动模式后切换网页连续截图 5 次并返回项目。
+- Popup 关闭、标签页切换、Service Worker 挂起/唤醒后的上下文恢复。
+- 重复 captureId 的真实消息重投递和项目删除竞态。
+- 退出模式后执行普通截图，确认不再自动加入旧项目。
+
+## Phase 4.1.2 / 4.1.3：Real Browser Acceptance 准备
+
+- 新增正式测试矩阵、环境记录模板和缺陷记录模板：`docs/PHASE4_BROWSER_ACCEPTANCE.md`、`docs/PHASE4_BUG_TRACKER.md`。
+- 修复多窗口项目剪藏上下文覆盖风险：上下文按 `window:<windowId>` 保存，写入串行化；旧扩展级上下文只迁移到首次读取它的窗口。
+- syntheticDataset 仅允许在 jsdom + fake-indexeddb 中生成和清理 100/500/1000 素材，真实 Chrome 不调用清理函数。
+- 本地自动化仍覆盖 14 个测试文件、50 个测试；真实 Chrome、Shadow DOM、跨域 iframe、DPR/缩放、Service Worker 重启和大规模性能均保持“未执行”。

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
 import type { ClipItemSummary } from '../../types/capture';
 import type { ClipProject } from '../../types/editor';
-import { getPreviewUrl } from '../../modules/media/blobPreview';
+import { getPreviewUrl, releasePreviewUrl } from '../../modules/media/blobPreview';
 
 interface AssetPanelProps {
   clips: ClipItemSummary[];
@@ -12,12 +12,15 @@ interface AssetPanelProps {
 
 function AssetThumbnail({ clipId }: { clipId: string }): React.JSX.Element {
   const [src, setSrc] = useState('');
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let disposed = false;
-    void getPreviewUrl(clipId).then((url) => { if (!disposed && url) setSrc(url); });
-    return () => { disposed = true; };
+    let objectUrl = '';
+    setSrc(''); setFailed(false);
+    void getPreviewUrl(clipId).then((url) => { if (!url) { if (!disposed) setFailed(true); return; } if (disposed) { releasePreviewUrl(url); return; } objectUrl = url; setSrc(url); });
+    return () => { disposed = true; if (objectUrl) releasePreviewUrl(objectUrl); };
   }, [clipId]);
-  return <>{src ? <img src={src} alt="" /> : <span className="thumb-placeholder" />}</>;
+  return <>{src && !failed ? <img src={src} alt="" onError={() => setFailed(true)} /> : <span className="thumb-placeholder">{failed ? '图片数据损坏，可重新截图' : ''}</span>}</>;
 }
 
 export function AssetPanel({ clips, project, onAdd }: AssetPanelProps): React.JSX.Element {

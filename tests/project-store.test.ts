@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import type { ClipItemRecord } from '../src/types/capture';
 import { createDefaultProject, type ClipProject } from '../src/types/editor';
 import { DB_NAME, CLIP_STORE_NAME, DB_VERSION, PROJECT_STORE_NAME, ClipReferenceError, ProjectReferenceError, createProject, deleteClip, deleteProject, getClip, getProject, listClips, listProjects, openDatabase, saveClip, saveProject, loadProjectWithClips } from '../src/modules/storage/clipStore';
+import { DEFAULT_PROJECT_NAME, normalizeProjectName } from '../src/modules/projects/projectName';
 
 function deleteDatabase(): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -80,6 +81,17 @@ describe('IndexedDB v2 project storage', () => {
     expect((await listProjects())[0].name).toBe('已更新');
     await deleteProject(project.id);
     expect(await getProject(project.id)).toBeUndefined();
+  });
+
+  it('normalizes project names and preserves the renamed project across reloads', async () => {
+    expect(normalizeProjectName('  新名称  ')).toBe('新名称');
+    expect(normalizeProjectName('   ')).toBeUndefined();
+    expect(DEFAULT_PROJECT_NAME).toBe('未命名项目');
+    const project = createDefaultProject(DEFAULT_PROJECT_NAME, 10);
+    await createProject(project);
+    await saveProject({ ...project, name: normalizeProjectName('  设计稿  ')!, updatedAt: 20 });
+    expect((await getProject(project.id))?.name).toBe('设计稿');
+    expect((await listProjects())[0].id).toBe(project.id);
   });
 
   it('persists only clip references and resolves the associated ClipItems', async () => {

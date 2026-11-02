@@ -3,6 +3,8 @@ import Konva from 'konva';
 import { Arrow, Ellipse, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Text, Transformer } from 'react-konva';
 import type { ClipItemSummary, Point } from '../../types/capture';
 import { getClipImageBlob } from '../../modules/storage/clipStore';
+import { diagnosticError, describeBlob, logImageDiagnostic } from '../../modules/media/imageDiagnostics';
+import { loadBlobImage, revokeBlobObjectUrl } from '../../modules/media/imageLoader';
 import { annotationSelectionId, redactionSelectionId, type Annotation, type AnnotationDraft, type CanvasItem, type ClipProject, type EditorTool, type Redaction } from '../../types/editor';
 import { itemBounds, rectIntersects, snapPosition, type SnapGuide } from '../../modules/canvas-editor/transform';
 
@@ -31,14 +33,13 @@ function useBlobImages(clips: ClipItemSummary[], project: ClipProject): Map<stri
     const urls: string[] = [];
     setImages(new Map());
     const usedIds = new Set(project.items.filter((item) => item.type === 'image' && item.visible).map((item) => item.type === 'image' ? item.clipId : ''));
-    for (const clip of clips.filter((item) => usedIds.has(item.id))) void getClipImageBlob(clip.id).then((blob) => {
-      if (disposed || !blob) return;
-      const url = URL.createObjectURL(blob); urls.push(url);
-      const image = new Image(); image.decoding = 'async';
-      image.onload = () => { if (!disposed) setImages((current) => new Map(current).set(clip.id, image)); };
-      image.src = url;
-    });
-    return () => { disposed = true; urls.forEach((url) => URL.revokeObjectURL(url)); };
+    for (const clip of clips.filter((item) => usedIds.has(item.id))) void getClipImageBlob(clip.id).then(async (blob) => {
+      if (disposed || !blob) { if (!blob) logImageDiagnostic({ stage: 'studio-blob-missing', clipId: clip.id, exists: false }); return; }
+      const loaded = await loadBlobImage(blob, clip.id);
+      if (disposed) { revokeBlobObjectUrl(loaded.url, clip.id); return; }
+      urls.push(loaded.url); setImages((current) => new Map(current).set(clip.id, loaded.image));
+    }).catch((error) => logImageDiagnostic({ stage: 'studio-load-failed', clipId: clip.id, ...describeBlob(undefined), error: diagnosticError(error) }));
+    return () => { disposed = true; urls.forEach((url) => revokeBlobObjectUrl(url)); };
   }, [clips, project.items]);
   return images;
 }
@@ -200,7 +201,7 @@ export function StudioViewport({ project, clips, selectedIds, activeTool, onTool
         <Rect name="canvas-background" width={project.canvas.width} height={project.canvas.height} fill={typeof project.canvas.background === 'string' ? project.canvas.background : undefined} fillLinearGradientStartPoint={{ x: 0, y: 0 }} fillLinearGradientEndPoint={{ x: project.canvas.width, y: project.canvas.height }} fillLinearGradientColorStops={typeof project.canvas.background === 'string' ? undefined : [0, '#f8fafc', 1, '#c4b5fd']} shadowColor="#020617" shadowBlur={24} shadowOpacity={.2} />
         {sortedItems.filter((item) => item.visible).map((item) => { const common = commonNode(item.id, item.transform); const selected = selectedIds.includes(item.id); const image = item.type === 'image' ? images.get(item.clipId) : undefined; const props = { onMouseDown: (event: Konva.KonvaEventObject<MouseEvent>) => selectNode(item.id, event), onDragStart: () => beginDrag(item.id), onDragMove: () => moveDrag(item.id), onDragEnd: endDrag };
           if (item.type === 'image') return image ? <KonvaImage key={item.id} {...common} {...props} image={image} cornerRadius={item.style.cornerRadius} stroke={item.style.border?.color} strokeWidth={item.style.border?.width} shadowColor={item.style.shadow?.color} shadowBlur={item.style.shadow?.blur} shadowOffsetX={item.style.shadow?.offsetX} shadowOffsetY={item.style.shadow?.offsetY} draggable={!item.locked && !spaceHeld} /> : <Group key={item.id} {...common} {...props}><Rect x={-item.transform.width / 2} y={-item.transform.height / 2} width={item.transform.width} height={item.transform.height} fill="#e2e8f0" /><Text text={clipNames.get(item.clipId) ?? '素材加载中'} x={-item.transform.width / 2 + 12} y={-item.transform.height / 2 + 12} fill="#64748b" />{selected && <Rect name="selection-overlay" x={-item.transform.width / 2 - 4} y={-item.transform.height / 2 - 4} width={item.transform.width + 8} height={item.transform.height + 8} stroke="#7c3aed" dash={[6, 4]} listening={false} />}</Group>;
-          return <Text key={item.id} {...common} {...props} text={item.type === 'text' ? item.text : item.type} x={common.x - item.transform.width / 2} y={common.y - item.transform.height / 2} fill="#334155" />;
+          return <Text key={item.id} {...common} {...props} text={item.type === 'text' ? item.text : item.type} fill="#334155" />;
         })}
         {sortedAnnotations.filter((annotation) => annotation.visible).map(renderAnnotation)}
         {sortedRedactions.filter((redaction) => redaction.visible).map((redaction) => { const common = commonNode(selectionForRedaction(redaction), redaction.transform); return <Group key={redaction.id} {...common} draggable={!redaction.locked && !spaceHeld} onMouseDown={(event) => selectNode(selectionForRedaction(redaction), event)} onDragStart={() => beginDrag(selectionForRedaction(redaction))} onDragMove={() => moveDrag(selectionForRedaction(redaction))} onDragEnd={endDrag}><Rect x={-redaction.transform.width / 2} y={-redaction.transform.height / 2} width={redaction.transform.width} height={redaction.transform.height} fill={redaction.type === 'solid' ? redaction.style.color : redaction.type === 'pixelate' ? 'rgba(15,23,42,.65)' : 'rgba(96,165,250,.45)'} stroke="#f97316" dash={[5, 3]} /><Text text={redaction.type === 'blur' ? 'BLUR' : redaction.type === 'pixelate' ? 'PIXEL' : 'MASK'} x={-redaction.transform.width / 2 + 6} y={-redaction.transform.height / 2 + 6} fill="#fff" fontSize={11} /> </Group>; })}

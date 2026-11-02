@@ -1,4 +1,4 @@
-import { applyAlphaMask, createSelection, normalizeRect, pointInSelection, rasterizeMask, rectFromPoints } from '../src/modules/selection/geometry';
+import { applyAlphaMask, createSelection, normalizeRect, pathForSelection, pointInSelection, rasterizeMask, rectFromPoints } from '../src/modules/selection/geometry';
 import { resizeSelection, translateSelection } from '../src/modules/selection/transforms';
 
 describe('selection geometry and alpha', () => {
@@ -9,6 +9,12 @@ describe('selection geometry and alpha', () => {
   it('creates geometric selections with explicit bounds', () => {
     expect(createSelection('rectangle', { x: 20, y: 30 }, { x: 5, y: 10 })).toEqual({ type: 'rectangle', bounds: { x: 5, y: 10, width: 15, height: 20 } });
     expect(createSelection('ellipse', { x: 2, y: 3 }, { x: 12, y: 13 })).toEqual({ type: 'ellipse', bounds: { x: 2, y: 3, width: 10, height: 10 } });
+  });
+
+  it('keeps rectangle preview and crop geometry on four straight edges', () => {
+    expect(pathForSelection({ type: 'rectangle', bounds: { x: 10, y: 20, width: 30, height: 40 } })).toEqual([
+      { x: 10, y: 20 }, { x: 40, y: 20 }, { x: 40, y: 60 }, { x: 10, y: 60 },
+    ]);
   });
 
   it('moves and resizes a selection without losing its path', () => {

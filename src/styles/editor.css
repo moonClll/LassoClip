@@ -1,20 +1,25 @@
 :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #080b16; color: #e2e8f0; }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 1100px; min-height: 100vh; background: #080b16; }
+html, body, #root { width: 100%; height: 100%; }
+body { margin: 0; min-width: 1100px; overflow: hidden; background: #080b16; }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
-.editor-app { min-height: 100vh; display: flex; flex-direction: column; background: radial-gradient(circle at 50% -30%, #21184b 0, #0b1020 32%, #080b16 70%); }
-.editor-toolbar { height: 64px; display: flex; align-items: center; gap: 8px; padding: 0 18px; border-bottom: 1px solid rgba(148,163,184,.15); background: rgba(8,11,22,.88); backdrop-filter: blur(20px); z-index: 2; }
+.editor-app { height: 100vh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: radial-gradient(circle at 50% -30%, #21184b 0, #0b1020 32%, #080b16 70%); }
+.editor-toolbar { flex: 0 0 64px; height: 64px; display: flex; align-items: center; gap: 8px; padding: 0 18px; border-bottom: 1px solid rgba(148,163,184,.15); background: rgba(8,11,22,.88); backdrop-filter: blur(20px); z-index: 2; }
 .studio-brand { display: flex; align-items: center; gap: 9px; min-width: 140px; color: #f8fafc; font-size: 14px; font-weight: 700; }
 .studio-brand-button { padding: 0; border: 0; background: transparent; cursor: pointer; text-align: left; }
 .studio-mark { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 8px; background: linear-gradient(135deg, #a78bfa, #6d28d9); color: #fff; font-weight: 800; box-shadow: 0 5px 16px rgba(124,58,237,.35); }
 .project-switcher { display: flex; gap: 6px; align-items: center; }
 .project-switcher select { max-width: 180px; padding: 7px 27px 7px 10px; border: 1px solid rgba(148,163,184,.18); border-radius: 8px; color: #cbd5e1; background: rgba(30,41,59,.7); outline: none; }
+.project-name-button { max-width: 150px; overflow: hidden; padding: 6px 8px; border: 1px solid transparent; border-radius: 7px; color: #e2e8f0; background: transparent; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.project-name-button:hover { border-color: rgba(167,139,250,.3); background: rgba(124,58,237,.16); }
+.project-name-input { width: 150px; padding: 6px 8px; border: 1px solid rgba(167,139,250,.55); border-radius: 7px; outline: none; color: #f8fafc; background: rgba(30,41,59,.9); font-size: 11px; }
 .toolbar-spacer { flex: 1; }
 .toolbar-button { padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; color: #aeb8cf; background: transparent; font-size: 11px; white-space: nowrap; }
 .toolbar-button:hover:not(:disabled) { color: #f8fafc; background: rgba(148,163,184,.13); }
 .toolbar-button:disabled { opacity: .35; cursor: default; }
 .toolbar-button.active { color: #ddd6fe; border-color: rgba(167,139,250,.26); background: rgba(124,58,237,.22); }
+.capture-project-button { color: #a7f3d0; border-color: rgba(52,211,153,.2); background: rgba(16,185,129,.1); }.capture-project-button:hover:not(:disabled) { color: #ecfdf5; background: rgba(16,185,129,.25); }.capture-project-button.active { color: #052e16; border-color: rgba(110,231,183,.55); background: #6ee7b7; }
 .tool-group { display: flex; align-items: center; gap: 2px; max-width: 420px; overflow-x: auto; padding: 3px; border: 1px solid rgba(148,163,184,.13); border-radius: 9px; background: rgba(15,23,42,.48); }
 .tool-button { padding: 5px 7px; border: 0; border-radius: 6px; color: #8f9bb5; background: transparent; font-size: 10px; white-space: nowrap; }
 .tool-button:hover { color: #f8fafc; background: rgba(148,163,184,.12); }
@@ -28,13 +33,13 @@ button { cursor: pointer; }
 .save-indicator { display: inline-flex; align-items: center; gap: 5px; min-width: 52px; color: #71809e; font-size: 10px; white-space: nowrap; }
 .save-indicator i { width: 5px; height: 5px; border-radius: 50%; background: #34d399; box-shadow: 0 0 8px #34d399; }
 .save-indicator.error i { background: #fb7185; box-shadow: 0 0 8px #fb7185; }
-.editor-alert { padding: 8px 18px; color: #fecdd3; background: rgba(159,18,57,.28); border-bottom: 1px solid rgba(251,113,133,.24); font-size: 12px; }
-.editor-grid { flex: 1; display: grid; grid-template-columns: 272px minmax(520px, 1fr) 258px; min-height: 0; }
+.editor-alert { flex: 0 0 auto; padding: 8px 18px; color: #fecdd3; background: rgba(159,18,57,.28); border-bottom: 1px solid rgba(251,113,133,.24); font-size: 12px; }
+.editor-grid { flex: 1 1 auto; display: grid; grid-template-columns: 272px minmax(520px, 1fr) 258px; min-height: 0; overflow: hidden; }
 .left-rail { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid rgba(148,163,184,.13); background: rgba(15,23,42,.43); }
 .panel { min-height: 0; padding: 17px 15px; }
 .asset-panel { flex: 1 1 58%; overflow: auto; border-bottom: 1px solid rgba(148,163,184,.13); }
 .layer-panel { flex: 1 1 42%; overflow: auto; }
-.inspector-panel { border-left: 1px solid rgba(148,163,184,.13); background: rgba(15,23,42,.32); }
+.inspector-panel { min-height: 0; overflow: auto; border-left: 1px solid rgba(148,163,184,.13); background: rgba(15,23,42,.32); }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; }
 .panel-kicker { color: #818bab; font-size: 9px; letter-spacing: .16em; font-weight: 800; }
 .panel-heading h2 { margin: 5px 0 0; color: #f1f5f9; font-size: 15px; letter-spacing: -.02em; }

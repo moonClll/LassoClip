@@ -1,14 +1,21 @@
 import type { ClipBlobRecord, ClipItemRecord, ClipItemSummary } from '../../types/capture';
 import type { ClipProject } from '../../types/editor';
 import { projectClipIds } from '../../types/editor';
+import { describeBlob, logImageDiagnostic } from '../media/imageDiagnostics';
 
 export const DB_NAME = 'lassoclip';
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 export const CLIP_STORE_NAME = 'clips';
 export const CLIP_BLOB_STORE_NAME = 'clipBlobs';
 export const PROJECT_STORE_NAME = 'projects';
 export const TAG_STORE_NAME = 'tags';
 export const COLLECTION_STORE_NAME = 'collections';
+export const RESTORE_META_STORE_NAME = 'restoreMeta';
+export const RESTORE_CLIP_STORE_NAME = 'restoreClips';
+export const RESTORE_BLOB_STORE_NAME = 'restoreClipBlobs';
+export const RESTORE_PROJECT_STORE_NAME = 'restoreProjects';
+export const RESTORE_TAG_STORE_NAME = 'restoreTags';
+export const RESTORE_COLLECTION_STORE_NAME = 'restoreCollections';
 
 /** Normalizes projects created before the Phase 2.4 annotation schema. */
 export function normalizeProject(project: ClipProject): ClipProject {
@@ -79,6 +86,12 @@ export function openDatabase(): Promise<IDBDatabase> {
         const collections = database.createObjectStore(COLLECTION_STORE_NAME, { keyPath: 'id' });
         collections.createIndex('updatedAt', 'updatedAt', { unique: false });
       }
+      if (!database.objectStoreNames.contains(RESTORE_META_STORE_NAME)) database.createObjectStore(RESTORE_META_STORE_NAME, { keyPath: 'id' });
+      if (!database.objectStoreNames.contains(RESTORE_CLIP_STORE_NAME)) database.createObjectStore(RESTORE_CLIP_STORE_NAME, { keyPath: 'id' });
+      if (!database.objectStoreNames.contains(RESTORE_BLOB_STORE_NAME)) database.createObjectStore(RESTORE_BLOB_STORE_NAME, { keyPath: 'id' });
+      if (!database.objectStoreNames.contains(RESTORE_PROJECT_STORE_NAME)) database.createObjectStore(RESTORE_PROJECT_STORE_NAME, { keyPath: 'id' });
+      if (!database.objectStoreNames.contains(RESTORE_TAG_STORE_NAME)) database.createObjectStore(RESTORE_TAG_STORE_NAME, { keyPath: 'id' });
+      if (!database.objectStoreNames.contains(RESTORE_COLLECTION_STORE_NAME)) database.createObjectStore(RESTORE_COLLECTION_STORE_NAME, { keyPath: 'id' });
     };
     request.onblocked = () => reject(new Error('本地素材库正在被其他窗口占用，请关闭其他 LassoClip 页面后重试'));
     request.onsuccess = () => {
@@ -104,6 +117,8 @@ export async function saveClip(item: ClipItemRecord): Promise<void> {
       const { imageBlob, thumbnailBlob, ...summary } = item;
       transaction.objectStore(CLIP_STORE_NAME).put(summary);
       transaction.objectStore(CLIP_BLOB_STORE_NAME).put({ id: item.id, imageBlob, thumbnailBlob, hasThumbnail: Boolean(thumbnailBlob) });
+      logImageDiagnostic({ stage: 'idb-save-original', clipId: item.id, ...describeBlob(imageBlob) });
+      logImageDiagnostic({ stage: 'idb-save-thumbnail', clipId: item.id, ...describeBlob(thumbnailBlob) });
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('素材保存失败'));
       transaction.onabort = () => reject(transaction.error ?? new Error('素材保存已回滚'));
@@ -149,7 +164,9 @@ export async function getClipThumbnail(id: string): Promise<Blob | undefined> {
   const database = await openDatabase();
   try {
     const record = await requestResult(database.transaction(CLIP_BLOB_STORE_NAME, 'readonly').objectStore(CLIP_BLOB_STORE_NAME).get(id)) as ClipBlobRecord | undefined;
-    return record?.thumbnailBlob;
+    const blob = record?.thumbnailBlob;
+    logImageDiagnostic({ stage: 'idb-read-thumbnail', clipId: id, ...describeBlob(blob) });
+    return blob;
   } finally { database.close(); }
 }
 
@@ -157,7 +174,9 @@ export async function getClipImageBlob(id: string): Promise<Blob | undefined> {
   const database = await openDatabase();
   try {
     const record = await requestResult(database.transaction(CLIP_BLOB_STORE_NAME, 'readonly').objectStore(CLIP_BLOB_STORE_NAME).get(id)) as ClipBlobRecord | undefined;
-    return record?.imageBlob;
+    const blob = record?.imageBlob;
+    logImageDiagnostic({ stage: 'idb-read-original', clipId: id, ...describeBlob(blob) });
+    return blob;
   } finally { database.close(); }
 }
 

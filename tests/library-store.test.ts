@@ -12,11 +12,11 @@ function imageItem(id: string, clipId: string) { return { id, type: 'image' as c
 describe('Phase 3.2 library storage', () => {
   beforeEach(async () => deleteDatabase());
 
-  it('migrates v2 to v4 without touching clips and creates organization/blob stores', async () => {
+  it('migrates v2 to v5 without touching clips and creates organization/blob/staging stores', async () => {
     await new Promise<void>((resolve, reject) => { const request = indexedDB.open(DB_NAME, 2); request.onupgradeneeded = () => { const db = request.result; db.createObjectStore(CLIP_STORE_NAME, { keyPath: 'id' }); db.createObjectStore(PROJECT_STORE_NAME, { keyPath: 'id' }); }; request.onsuccess = () => { request.result.close(); resolve(); }; request.onerror = () => reject(request.error); });
     await saveClip(makeClip('legacy', [' Research  ']) );
     const db = await openDatabase();
-    expect(db.version).toBe(4); expect([...db.objectStoreNames]).toEqual(expect.arrayContaining([CLIP_STORE_NAME, CLIP_BLOB_STORE_NAME, PROJECT_STORE_NAME, TAG_STORE_NAME, COLLECTION_STORE_NAME])); db.close();
+    expect(db.version).toBe(5); expect([...db.objectStoreNames]).toEqual(expect.arrayContaining([CLIP_STORE_NAME, CLIP_BLOB_STORE_NAME, PROJECT_STORE_NAME, TAG_STORE_NAME, COLLECTION_STORE_NAME, 'restoreClips', 'restoreClipBlobs'])); db.close();
     expect(await getClip('legacy')).toHaveProperty('imageBlob');
   });
 

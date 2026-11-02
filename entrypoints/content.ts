@@ -1,6 +1,7 @@
 import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { canvasToBlob, canvasToThumbnailBlob, cropCanvasByCssSelection, imageToCanvas, loadImage } from '../src/modules/image-processing/canvas';
+import { blobToTransportPayload } from '../src/modules/media/blobTransport';
 import { createViewportMetrics } from '../src/modules/selection/coordinates';
 import { normalizeRect, rectFromPoints } from '../src/modules/selection/geometry';
 import { resizeSelection, translateSelection } from '../src/modules/selection/transforms';
@@ -29,7 +30,7 @@ const css = `
 .hint { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 13px; border: 1px solid rgba(255,255,255,.12); border-radius: 999px; background: rgba(15,23,42,.78); color: #cbd5e1; font-size: 12px; }
 .toast { position: absolute; right: 20px; bottom: 20px; padding: 10px 14px; border-radius: 10px; background: #0f172a; color: #f8fafc; box-shadow: 0 12px 30px rgba(0,0,0,.3); font-size: 13px; }
 .success-actions { position: absolute; right: 20px; bottom: 20px; display: flex; align-items: center; gap: 7px; padding: 9px; border: 1px solid rgba(196,181,253,.25); border-radius: 12px; background: rgba(15,23,42,.94); box-shadow: 0 12px 30px rgba(0,0,0,.35); }
-.success-actions span { margin-right: 4px; color: #cbd5e1; font-size: 12px; }.success-actions button { padding: 7px 9px; border: 0; border-radius: 7px; color: #ede9fe; background: rgba(124,58,237,.34); cursor: pointer; font-size: 11px; }.success-actions button:hover { background: rgba(124,58,237,.56); }.success-actions .dismiss { color: #94a3b8; background: transparent; }
+.success-actions span { margin-right: 4px; color: #cbd5e1; font-size: 12px; }.success-actions button { padding: 7px 9px; border: 0; border-radius: 7px; color: #ede9fe; background: rgba(124,58,237,.34); cursor: pointer; font-size: 11px; }.success-actions button:hover { background: rgba(124,58,237,.56); }.success-actions .dismiss { color: #94a3b8; background: transparent; }.success-actions .continue { color: #052e16; background: #6ee7b7; font-weight: 700; }
 `;
 
 function pointFromEvent(event: PointerEvent, canvas: HTMLCanvasElement): Point {
@@ -58,8 +59,8 @@ function normalizeShapeRect(start: Point, end: Point, keepSquare: boolean): Rect
   };
 }
 
-class CaptureOverlay {
-  private readonly captureId = crypto.randomUUID();
+export class CaptureOverlay {
+  private captureId = crypto.randomUUID();
   private readonly host: HTMLDivElement;
   private readonly root: ShadowRoot;
   private readonly canvas: HTMLCanvasElement;
@@ -79,13 +80,17 @@ class CaptureOverlay {
   private livePoint: Point | null = null;
   private selection: SelectionGeometry | null = null;
   private candidateElement: Element | null = null;
+  private elementCandidates: Element[] = [];
+  private candidateIndex = 0;
+  private elementLocked = false;
   private sourceImage: HTMLImageElement | null = null;
   private adjustingSelection: 'move' | 'resize' | null = null;
   private adjustStart: Point | null = null;
   private adjustOrigin: SelectionGeometry | null = null;
+  private confirmInFlight = false;
   private readonly onKeyDown = (event: KeyboardEvent) => this.handleKeyDown(event);
 
-  constructor(private readonly data: CaptureStartMessage) {
+  constructor(private data: CaptureStartMessage) {
     this.host = document.createElement('div');
     this.host.id = HOST_ID;
     Object.assign(this.host.style, { position: 'fixed', inset: '0', zIndex: '2147483647', pointerEvents: 'auto' });
@@ -133,6 +138,29 @@ class CaptureOverlay {
     this.resize();
   }
 
+  async prepareForCapture(): Promise<{ ok: true }> {
+    this.host.style.visibility = 'hidden';
+    this.host.style.pointerEvents = 'none';
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return { ok: true };
+  }
+
+  replaceCapture(data: CaptureStartMessage): void {
+    this.data = data;
+    this.captureId = crypto.randomUUID();
+    this.sourceImage = null;
+    this.confirmInFlight = false;
+    this.image.src = data.dataUrl;
+    this.host.style.visibility = 'visible';
+    this.host.style.pointerEvents = 'auto';
+    this.canvas.style.pointerEvents = 'auto';
+    this.toast.hidden = true;
+    this.resetSelection();
+    this.resize();
+  }
+
+  isMounted(): boolean { return this.host.isConnected; }
+
   private createToolbar(): HTMLDivElement {
     const toolbar = document.createElement('div');
     toolbar.className = 'toolbar';
@@ -154,14 +182,14 @@ class CaptureOverlay {
     reset.addEventListener('click', () => this.resetSelection());
     toolbar.append(reset);
     const confirm = document.createElement('button');
-    confirm.textContent = '完成';
+    confirm.textContent = '确认';
     confirm.className = 'confirm';
     confirm.addEventListener('click', () => void this.confirm());
     toolbar.append(confirm);
     const cancel = document.createElement('button');
     cancel.textContent = '取消';
     cancel.className = 'cancel';
-    cancel.addEventListener('click', () => this.close());
+    cancel.addEventListener('click', () => void this.cancelSelection());
     toolbar.append(cancel);
     return toolbar;
   }
@@ -178,7 +206,7 @@ class CaptureOverlay {
     this.mode = mode;
     this.resetSelection();
     for (const button of this.toolbar.querySelectorAll<HTMLButtonElement>('button[data-mode]')) button.classList.toggle('active', button.dataset.mode === mode);
-    this.hint.textContent = mode === 'element' ? '移动到元素上高亮，点击后按“完成”确认' : '拖动绘制选区，Enter 确认，Esc 取消';
+    this.hint.textContent = mode === 'element' ? '移动到元素上高亮，点击锁定；[ / ] 切换父子元素' : '拖动绘制选区，Enter 确认，Esc 取消';
   }
 
   private resetSelection(): void {
@@ -186,6 +214,10 @@ class CaptureOverlay {
     this.startPoint = null;
     this.livePoint = null;
     this.selection = null;
+    this.candidateElement = null;
+    this.elementCandidates = [];
+    this.candidateIndex = 0;
+    this.elementLocked = false;
     this.adjustingSelection = null;
     this.adjustStart = null;
     this.adjustOrigin = null;
@@ -193,15 +225,62 @@ class CaptureOverlay {
     this.draw();
   }
 
-  private findElementAt(point: Point): Element | null {
+  private findElementCandidates(point: Point): Element[] {
+    const previousVisibility = this.host.style.visibility;
+    const previousPointerEvents = this.host.style.pointerEvents;
     this.host.style.pointerEvents = 'none';
-    const element = document.elementFromPoint(point.x, point.y);
-    this.host.style.pointerEvents = 'auto';
-    if (!element || element === document.documentElement || element === document.body) return null;
-    const candidate = element.closest('img,svg,table,pre,blockquote,figure,button,article,section,div,p,h1,h2,h3,h4,li') ?? element;
-    const rect = (candidate as HTMLElement).getBoundingClientRect();
-    if (rect.width < 2 || rect.height < 2 || rect.width > window.innerWidth * 1.05 || rect.height > window.innerHeight * 1.05) return null;
-    return candidate;
+    let elements: Element[] = [];
+    try {
+      elements = typeof document.elementsFromPoint === 'function'
+        ? document.elementsFromPoint(point.x, point.y)
+        : [document.elementFromPoint(point.x, point.y)].filter((element): element is Element => Boolean(element));
+    } finally {
+      this.host.style.visibility = previousVisibility;
+      this.host.style.pointerEvents = previousPointerEvents || 'auto';
+    }
+    const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+    const seen = new Set<Element>();
+    return elements.filter((element) => {
+      if (seen.has(element) || element === this.host || this.host.contains(element) || element.getRootNode() === this.root) return false;
+      seen.add(element);
+      if (element === document.documentElement || element === document.body) return false;
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2 || rect.right <= 0 || rect.bottom <= 0 || rect.left >= window.innerWidth || rect.top >= window.innerHeight) return false;
+      const tagName = element.tagName.toLowerCase();
+      const genericContainer = ['html', 'body', 'main', 'section', 'article', 'div'].includes(tagName);
+      if (genericContainer && rect.width * rect.height >= viewportArea * .92) return false;
+      return true;
+    });
+  }
+
+  private findElementAt(point: Point): Element | null {
+    return this.findElementCandidates(point)[0] ?? null;
+  }
+
+  private updateElementCandidate(point: Point): void {
+    const candidates = this.findElementCandidates(point);
+    this.elementCandidates = candidates;
+    if (candidates.length === 0) {
+      this.candidateElement = null;
+      this.candidateIndex = 0;
+      this.selection = null;
+      return;
+    }
+    const currentIndex = this.candidateElement ? candidates.indexOf(this.candidateElement) : -1;
+    this.candidateIndex = currentIndex >= 0 ? currentIndex : 0;
+    this.candidateElement = candidates[this.candidateIndex];
+    const bounds = this.elementRect(this.candidateElement);
+    this.selection = { type: 'element', bounds, points: rectToPoints(bounds) };
+  }
+
+  private cycleElementCandidate(direction: -1 | 1): void {
+    if (this.elementCandidates.length < 2) return;
+    this.candidateIndex = (this.candidateIndex + direction + this.elementCandidates.length) % this.elementCandidates.length;
+    this.candidateElement = this.elementCandidates[this.candidateIndex];
+    const bounds = this.elementRect(this.candidateElement);
+    this.selection = { type: 'element', bounds, points: rectToPoints(bounds) };
+    this.elementLocked = true;
+    this.draw();
   }
 
   private elementRect(element: Element): Rect {
@@ -214,7 +293,7 @@ class CaptureOverlay {
     this.canvas.setPointerCapture(event.pointerId);
     const point = pointFromEvent(event, this.canvas);
     if (this.mode === 'element') {
-      if (this.selection?.type === 'element') {
+      if (this.elementLocked && this.selection?.type === 'element') {
         const bounds = this.selection.bounds;
         const nearResizeHandle = Math.abs(point.x - (bounds.x + bounds.width)) < 12 && Math.abs(point.y - (bounds.y + bounds.height)) < 12;
         if (nearResizeHandle || (point.x >= bounds.x && point.x <= bounds.x + bounds.width && point.y >= bounds.y && point.y <= bounds.y + bounds.height)) {
@@ -224,10 +303,16 @@ class CaptureOverlay {
           return;
         }
       }
-      this.candidateElement = this.findElementAt(point);
+      // A hover preview also uses `selection` for drawing. The first click
+      // must transition that preview into a locked element, rather than being
+      // interpreted as a move of the preview rectangle.
+      if (!this.elementLocked) this.updateElementCandidate(point);
+      this.candidateElement = this.candidateElement ?? this.findElementAt(point);
       if (this.candidateElement) {
         const bounds = this.elementRect(this.candidateElement);
         this.selection = { type: 'element', bounds, points: rectToPoints(bounds) };
+        this.elementLocked = true;
+        if (this.candidateElement instanceof HTMLIFrameElement && !this.candidateElement.contentDocument) this.showToast('跨域 iframe 无法注入，只能截取 iframe 可见区域');
         this.draw();
       }
       return;
@@ -270,12 +355,8 @@ class CaptureOverlay {
       this.draw();
       return;
     }
-    if (this.mode === 'element') {
-      const element = this.findElementAt(point);
-      if (element !== this.candidateElement) {
-        this.candidateElement = element;
-        this.selection = element ? { type: 'element', bounds: this.elementRect(element), points: rectToPoints(this.elementRect(element)) } : null;
-      }
+    if (this.mode === 'element' && !this.elementLocked) {
+      this.updateElementCandidate(point);
     } else if (this.mode === 'freehand' && this.startPoint) {
       this.points.push(point);
       this.selection = { type: 'freehand', points: [...this.points], bounds: rectFromPoints(this.points) };
@@ -296,8 +377,12 @@ class CaptureOverlay {
       this.draw();
       return;
     }
-    if (this.mode === 'freehand' && this.startPoint && this.points.length > 2) this.selection = { type: 'freehand', points: [...this.points], bounds: rectFromPoints(this.points) };
-    if ((this.mode === 'rectangle' || this.mode === 'ellipse') && this.startPoint && this.livePoint) this.selection = { type: this.mode, bounds: normalizeShapeRect(this.startPoint, this.livePoint, event.shiftKey) };
+    if (this.mode === 'freehand' && this.startPoint && this.points.length > 2) {
+      this.selection = { type: 'freehand', points: [...this.points], bounds: rectFromPoints(this.points) };
+    }
+    if ((this.mode === 'rectangle' || this.mode === 'ellipse') && this.startPoint && this.livePoint) {
+      this.selection = { type: this.mode, bounds: normalizeShapeRect(this.startPoint, this.livePoint, event.shiftKey) };
+    }
     this.startPoint = null;
     this.draw();
   };
@@ -316,7 +401,9 @@ class CaptureOverlay {
 
   private handleKeyDown(event: KeyboardEvent): void {
     if (event.key === 'Escape') this.close();
-    if (event.key === 'Enter') void this.confirm();
+    if (event.key === 'Enter') { event.preventDefault(); void this.confirm(); }
+    if (this.mode === 'element' && event.key === '[') { event.preventDefault(); this.cycleElementCandidate(1); }
+    if (this.mode === 'element' && event.key === ']') { event.preventDefault(); this.cycleElementCandidate(-1); }
     if (this.selection && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
       event.preventDefault();
       const distance = event.shiftKey ? 10 : 1;
@@ -343,7 +430,9 @@ class CaptureOverlay {
       this.ctx.save();
       this.ctx.globalCompositeOperation = 'destination-out';
       this.ctx.beginPath();
-      if (selection.type === 'ellipse') {
+      if (selection.type === 'rectangle' || selection.type === 'element') {
+        this.ctx.rect(selection.bounds.x, selection.bounds.y, selection.bounds.width, selection.bounds.height);
+      } else if (selection.type === 'ellipse') {
         this.ctx.ellipse(selection.bounds.x + selection.bounds.width / 2, selection.bounds.y + selection.bounds.height / 2, selection.bounds.width / 2, selection.bounds.height / 2, 0, 0, Math.PI * 2);
       } else {
         const points = selection.points ?? rectToPoints(selection.bounds);
@@ -358,7 +447,8 @@ class CaptureOverlay {
       this.ctx.lineWidth = 2;
       this.ctx.setLineDash([6, 4]);
       this.ctx.beginPath();
-      if (selection.type === 'ellipse') this.ctx.ellipse(selection.bounds.x + selection.bounds.width / 2, selection.bounds.y + selection.bounds.height / 2, selection.bounds.width / 2, selection.bounds.height / 2, 0, 0, Math.PI * 2);
+      if (selection.type === 'rectangle' || selection.type === 'element') this.ctx.rect(selection.bounds.x, selection.bounds.y, selection.bounds.width, selection.bounds.height);
+      else if (selection.type === 'ellipse') this.ctx.ellipse(selection.bounds.x + selection.bounds.width / 2, selection.bounds.y + selection.bounds.height / 2, selection.bounds.width / 2, selection.bounds.height / 2, 0, 0, Math.PI * 2);
       else {
         const points = selection.points ?? rectToPoints(selection.bounds);
         if (points.length) this.drawSmoothPath(this.ctx, points, !this.startPoint);
@@ -429,24 +519,36 @@ class CaptureOverlay {
     window.setTimeout(() => { this.toast.hidden = true; }, 1800);
   }
 
-  private showSuccessActions(): void {
-    const actions = document.createElement('div');
-    actions.className = 'success-actions';
-    const label = document.createElement('span'); label.textContent = '剪藏已保存';
-    const library = document.createElement('button'); library.textContent = '打开 Library';
-    library.addEventListener('click', () => { void browser.runtime.sendMessage({ type: 'library:open' }); this.close(); });
-    const studio = document.createElement('button'); studio.textContent = '进入 Studio';
-    studio.addEventListener('click', () => { void browser.runtime.sendMessage({ type: 'editor:open' }); this.close(); });
-    const dismiss = document.createElement('button'); dismiss.className = 'dismiss'; dismiss.textContent = '关闭'; dismiss.addEventListener('click', () => this.close());
-    actions.append(label, library, studio, dismiss); this.shell.append(actions);
+  private async cancelSelection(): Promise<void> {
+    if (this.confirmInFlight) return;
+    const hasDraft = Boolean(this.selection) || this.points.length > 0 || Boolean(this.startPoint);
+    if (!hasDraft) {
+      this.close();
+      return;
+    }
+    this.prepareNextSelection();
+  }
+
+  private prepareNextSelection(): void {
+    if (!this.host.isConnected) return;
+    // Consecutive selections on the same frozen page do not need another
+    // captureVisibleTab call. This keeps the page covered and avoids exposing
+    // the underlying document between selections.
+    this.captureId = crypto.randomUUID();
+    this.resetSelection();
+    this.canvas.style.pointerEvents = 'auto';
+    this.host.style.visibility = 'visible';
+    this.host.style.pointerEvents = 'auto';
   }
 
   private async confirm(): Promise<void> {
+    if (this.confirmInFlight) return;
     const selection = this.selection;
     if (!selection || selection.bounds.width < 1 || selection.bounds.height < 1) {
       this.showToast('请先绘制有效选区');
       return;
     }
+    this.confirmInFlight = true;
     try {
       this.hint.textContent = '正在生成透明 PNG…';
       this.canvas.style.pointerEvents = 'none';
@@ -456,15 +558,19 @@ class CaptureOverlay {
       const cropped = cropCanvasByCssSelection(sourceCanvas, selection, metrics);
       const blob = await canvasToBlob(cropped.canvas, 'image/png');
       const thumbnailBlob = await canvasToThumbnailBlob(cropped.canvas);
+      const imagePayload = await blobToTransportPayload(blob);
+      const thumbnailPayload = await blobToTransportPayload(thumbnailBlob);
       const source: ClipSource = { url: location.href, title: document.title, domain: location.hostname, capturedAt: this.data.capturedAt, elementText: this.candidateElement?.textContent?.trim().slice(0, 500) || undefined };
-      await browser.runtime.sendMessage({ type: 'capture:complete', captureId: this.captureId, imageBlob: blob, thumbnailBlob, selection, metrics, source });
-      let copied = true;
-      try { await copyPngToClipboard(blob); } catch { copied = false; }
-      this.showToast(copied ? '已复制 PNG，并保存到本地' : '已保存 PNG，但剪贴板复制失败');
-      this.showSuccessActions();
+      const response = await browser.runtime.sendMessage({ type: 'capture:complete', captureId: this.captureId, imageBlob: imagePayload, thumbnailBlob: thumbnailPayload, selection, metrics, source, projectCapture: this.data.projectCapture }) as { projectCapture?: boolean; addedToProject?: boolean; projectError?: string; projectId?: string } | undefined;
+      void copyPngToClipboard(blob).catch(() => this.showToast('已保存截图，但剪贴板复制失败'));
+      if (response?.projectError) this.showToast(response.projectError);
+      else this.showToast(response?.projectCapture && response.addedToProject ? '已保存并加入当前项目' : '剪藏已保存');
+      if (this.host.isConnected) this.prepareNextSelection();
     } catch (error) {
       this.showToast(error instanceof Error ? error.message : '截图处理失败');
       this.canvas.style.pointerEvents = 'auto';
+    } finally {
+      this.confirmInFlight = false;
     }
   }
 
@@ -484,10 +590,12 @@ export default defineContentScript({
   runAt: 'document_idle',
   main() {
     let overlay: CaptureOverlay | null = null;
-    browser.runtime.onMessage.addListener((message: CaptureStartMessage | { type: 'capture:error'; message: string }) => {
+    browser.runtime.onMessage.addListener(async (message: CaptureStartMessage | { type: 'capture:error'; message: string } | { type: 'capture:prepare' }) => {
       if (message.type === 'capture:start') {
-        overlay?.close();
-        overlay = new CaptureOverlay(message);
+        if (overlay?.isMounted()) overlay.replaceCapture(message);
+        else overlay = new CaptureOverlay(message);
+      } else if (message.type === 'capture:prepare') {
+        return overlay ? await overlay.prepareForCapture() : { ok: true };
       } else if (message.type === 'capture:error') {
         window.alert(`LassoClip：${message.message}`);
       }

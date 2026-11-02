@@ -60,12 +60,20 @@ function drawBackground(context: CanvasRenderingContext2D, project: ClipProject,
   context.fillRect(0, 0, project.canvas.width * scale, project.canvas.height * scale);
 }
 
-async function decodeClip(clip: ClipItemRecord): Promise<ImageBitmap | HTMLImageElement> {
-  if (typeof createImageBitmap === 'function') return createImageBitmap(clip.imageBlob);
+interface DecodedClip { image: ImageBitmap | HTMLImageElement; objectUrl?: string; }
+
+async function decodeClip(clip: ClipItemRecord): Promise<DecodedClip> {
+  if (typeof createImageBitmap === 'function') return { image: await createImageBitmap(clip.imageBlob) };
   const image = new Image();
-  image.src = URL.createObjectURL(clip.imageBlob);
-  await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error(`素材加载失败：${clip.name}`)); });
-  return image;
+  const objectUrl = URL.createObjectURL(clip.imageBlob);
+  image.src = objectUrl;
+  try {
+    await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error(`素材加载失败：${clip.name}`)); });
+    return { image, objectUrl };
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
 }
 
 function drawImageItem(context: CanvasRenderingContext2D, item: Extract<CanvasItem, { type: 'image' }>, image: ImageBitmap | HTMLImageElement, scale: number): void {
@@ -211,7 +219,14 @@ export async function renderProjectToCanvas(project: ClipProject, clips: ClipIte
   for (const layer of layers) {
     if (layer.type === 'image' && 'clipId' in layer) {
       const clip = clipMap.get(layer.clipId);
-      if (clip) drawImageItem(context, layer, await decodeClip(clip), scale);
+      if (clip) {
+        const decoded = await decodeClip(clip);
+        try { drawImageItem(context, layer, decoded.image, scale); }
+        finally {
+          if ('close' in decoded.image && typeof decoded.image.close === 'function') decoded.image.close();
+          if (decoded.objectUrl) URL.revokeObjectURL(decoded.objectUrl);
+        }
+      }
     } else if ('bounds' in layer) applyRedaction(context, layer, scale);
     else if ('points' in layer || layer.type === 'text') drawAnnotation(context, layer as Annotation, scale);
   }

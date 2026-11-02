@@ -4,6 +4,7 @@ import { reorderProjectLayers } from '../modules/canvas-editor/transform';
 import { annotationSelectionId, createDefaultProject, entityIdFromSelection, isAnnotationSelectionId, isRedactionSelectionId, redactionSelectionId, type Annotation, type AnnotationDraft, type CanvasItem, type ClipProject, type ImageCanvasItem, type ProjectLayer, type Redaction } from '../types/editor';
 import type { ClipItemSummary } from '../types/capture';
 import { createProject, listClipSummaries, listProjects, loadProjectWithClips, saveProject } from '../modules/storage/clipStore';
+import { DEFAULT_PROJECT_NAME, normalizeProjectName } from '../modules/projects/projectName';
 
 type EditorStatus = 'idle' | 'loading' | 'ready' | 'saving' | 'error';
 
@@ -16,7 +17,8 @@ interface EditorState {
   history: ClipProject[];
   future: ClipProject[];
   load: (projectId?: string) => Promise<void>;
-  createNew: () => Promise<void>;
+  createNew: (name?: string) => Promise<void>;
+  renameProject: (name: string) => Promise<boolean>;
   save: () => Promise<void>;
   addClip: (clip: ClipItemSummary) => void;
   removeSelected: () => void;
@@ -89,7 +91,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           return;
         }
       }
-      const project = createDefaultProject();
+      const project = createDefaultProject(DEFAULT_PROJECT_NAME);
       await createProject(project);
       set({ project, clips: await listClipSummaries(), selectedIds: [], history: [], future: [], status: 'ready' });
     } catch (error) {
@@ -97,14 +99,30 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
-  createNew: async () => {
+  createNew: async (name = DEFAULT_PROJECT_NAME) => {
     set({ status: 'loading', error: null });
     try {
-      const project = createDefaultProject();
+      const project = createDefaultProject(normalizeProjectName(name) ?? DEFAULT_PROJECT_NAME);
       await createProject(project);
       set({ project, clips: await listClipSummaries(), selectedIds: [], history: [], future: [], status: 'ready' });
     } catch (error) {
       set({ status: 'error', error: error instanceof Error ? error.message : '项目创建失败' });
+    }
+  },
+
+  renameProject: async (name) => {
+    const current = get().project;
+    const normalized = normalizeProjectName(name);
+    if (!current || !normalized) return false;
+    const next = { ...current, name: normalized, updatedAt: Date.now() };
+    set({ project: next, status: 'saving', error: null });
+    try {
+      await saveProject(next);
+      set({ status: 'ready' });
+      return true;
+    } catch (error) {
+      set({ project: current, status: 'error', error: error instanceof Error ? error.message : '项目重命名失败' });
+      return false;
     }
   },
 
@@ -122,7 +140,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   addClip: (clip) => {
     const { project, history, future } = get();
-    if (!project || project.items.some((item) => item.type === 'image' && item.clipId === clip.id && get().selectedIds.includes(item.id))) return;
+    // Library imports are idempotent; explicit duplication remains available through
+    // the duplicate action, so adding an already present ClipItem must not create a
+    // second accidental layer.
+    if (!project || project.items.some((item) => item.type === 'image' && item.clipId === clip.id)) return;
     const image = createImageItem(clip, project.items.length);
     const items = [...project.items, image];
     const nextProject = { ...project, items: project.canvas.layoutMode === 'auto' ? autoLayoutItems(items, project.canvas.width, project.canvas.height) : items };
@@ -298,6 +319,9 @@ export function selectedItem(project: ClipProject | null, selectedIds: string[])
 export function selectedEntity(project: ClipProject | null, selectedIds: string[]): ProjectLayer | undefined {
   if (!project) return undefined;
   const id = selectedIds[0];
+  // An empty selection is the normal initial editor state. Keep the selection
+  // contract explicit before dispatching to the string-prefixed ID helpers.
+  if (typeof id !== 'string' || id.length === 0) return undefined;
   if (isAnnotationSelectionId(id)) return project.annotations.find((annotation) => annotation.id === entityIdFromSelection(id));
   if (isRedactionSelectionId(id)) return project.redactions.find((redaction) => redaction.id === entityIdFromSelection(id));
   return project.items.find((item) => item.id === id);

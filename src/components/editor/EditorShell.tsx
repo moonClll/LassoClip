@@ -10,6 +10,7 @@ import { LayerPanel } from './LayerPanel';
 import { InspectorPanel } from './InspectorPanel';
 import { StudioViewport } from './StudioViewport';
 import { ExportDialog } from './ExportDialog';
+import { promptProjectName } from '../../modules/projects/projectName';
 import '../../styles/editor.css';
 
 export function EditorShell(): React.JSX.Element {
@@ -22,6 +23,7 @@ export function EditorShell(): React.JSX.Element {
   const future = useEditorStore((state) => state.future);
   const load = useEditorStore((state) => state.load);
   const createNew = useEditorStore((state) => state.createNew);
+  const renameProject = useEditorStore((state) => state.renameProject);
   const save = useEditorStore((state) => state.save);
   const addClip = useEditorStore((state) => state.addClip);
   const updateItem = useEditorStore((state) => state.updateItem);
@@ -60,12 +62,25 @@ export function EditorShell(): React.JSX.Element {
   const [projects, setProjects] = useState<ClipProject[]>([]);
   const [activeTool, setActiveTool] = useState<EditorTool>('select');
   const [exportOpen, setExportOpen] = useState(false);
+  const [projectCaptureActive, setProjectCaptureActive] = useState(false);
+  const [projectCaptureProjectId, setProjectCaptureProjectId] = useState<string | undefined>();
+  const [projectCaptureName, setProjectCaptureName] = useState<string | undefined>();
+  const [captureNotice, setCaptureNotice] = useState<string | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const projectId = useMemo(() => new URLSearchParams(window.location.search).get('projectId') ?? undefined, []);
 
   const refreshProjects = async () => setProjects(await listProjects());
   useEffect(() => { void load(projectId); }, [load, projectId]);
   useEffect(() => { void refreshProjects(); }, [project?.id, project?.updatedAt]);
+  useEffect(() => {
+    void browser.runtime.sendMessage({ type: 'project-capture:status' }).then((result) => {
+      const value = result as { active?: boolean; projectName?: string; projectId?: string; context?: { projectId?: string }; error?: string } | undefined;
+      setProjectCaptureActive(Boolean(value?.active));
+      setProjectCaptureName(value?.projectName);
+      setProjectCaptureProjectId(value?.projectId ?? value?.context?.projectId);
+      if (value?.error) setCaptureNotice(value.error);
+    }).catch(() => undefined);
+  }, [project?.id]);
   useEffect(() => {
     if (!project || status !== 'ready') return;
     const timer = window.setTimeout(() => void save(), 500);
@@ -78,9 +93,30 @@ export function EditorShell(): React.JSX.Element {
   const toggleLayout = () => setLayoutMode(project.canvas.layoutMode === 'auto' ? 'free' : 'auto');
   const focusAssets = () => document.querySelector<HTMLElement>('.asset-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   const setGradient = () => setBackground({ type: 'linear-gradient', value: 'linear-gradient(135deg, #f8fafc, #c4b5fd)' });
+  const startProjectCapture = async () => {
+    setCaptureNotice('正在启动项目剪藏模式…');
+    try {
+      const result = await browser.runtime.sendMessage({ type: 'project-capture:start', projectId: project.id }) as { ok?: boolean; message?: string; projectName?: string } | undefined;
+      if (!result?.ok) { setCaptureNotice(result?.message ?? '项目剪藏模式启动失败'); return; }
+      setProjectCaptureActive(true); setProjectCaptureProjectId(project.id); setProjectCaptureName(result.projectName ?? project.name); setCaptureNotice(`已进入项目剪藏模式：${result.projectName ?? project.name}。切换到网页后点击扩展图标即可连续截图。`);
+    } catch (error) { setCaptureNotice(error instanceof Error ? error.message : '项目剪藏模式启动失败'); }
+  };
+  const stopProjectCapture = async () => {
+    await browser.runtime.sendMessage({ type: 'project-capture:stop' });
+    setProjectCaptureActive(false); setProjectCaptureProjectId(undefined); setProjectCaptureName(undefined); setCaptureNotice('已退出项目剪藏模式，后续截图不会自动加入项目。');
+  };
+  const createNamedProject = () => {
+    const name = promptProjectName();
+    if (name) void createNew(name).then(refreshProjects);
+  };
+  const renameCurrentProject = async (name: string): Promise<void> => {
+    await renameProject(name);
+    if (projectCaptureProjectId === project.id) setProjectCaptureName(name);
+    await refreshProjects();
+  };
   return <main className="editor-app">
-    <EditorToolbar project={project} projects={projects} status={status === 'saving' ? '保存中' : error ? '错误' : '已保存'} canUndo={history.length > 0} canRedo={future.length > 0} activeTool={activeTool} onTool={setActiveTool} onOpenProject={(id) => void load(id)} onNewProject={() => void createNew().then(refreshProjects)} onUndo={undo} onRedo={redo} onAddAsset={focusAssets} onAutoLayout={autoLayout} onToggleLayout={toggleLayout} onBackground={setBackground} onGradient={setGradient} onExport={() => setExportOpen(true)} onOpenLibrary={() => void browser.tabs.create({ url: browser.runtime.getURL(`/library.html?projectId=${encodeURIComponent(project.id)}` as never) })} />
-    {error && <div className="editor-alert">{error}</div>}
+    <EditorToolbar project={project} projects={projects} status={status === 'saving' ? '保存中' : error ? '错误' : '已保存'} canUndo={history.length > 0} canRedo={future.length > 0} activeTool={activeTool} onTool={setActiveTool} onOpenProject={(id) => void load(id)} onNewProject={createNamedProject} onRenameProject={(name) => void renameCurrentProject(name)} onUndo={undo} onRedo={redo} onAddAsset={focusAssets} onAutoLayout={autoLayout} onToggleLayout={toggleLayout} onBackground={setBackground} onGradient={setGradient} onExport={() => setExportOpen(true)} onOpenLibrary={() => void browser.tabs.create({ url: browser.runtime.getURL(`/library.html?projectId=${encodeURIComponent(project.id)}` as never) })} projectCaptureActive={projectCaptureActive && projectCaptureProjectId === project.id} projectCaptureName={projectCaptureName} onStartProjectCapture={() => void startProjectCapture()} onStopProjectCapture={() => void stopProjectCapture()} />
+    {(error || captureNotice) && <div className="editor-alert">{error ?? captureNotice}</div>}
     <div className="editor-grid">
       <aside className="left-rail"><AssetPanel clips={clips} project={project} onAdd={addClip} /><LayerPanel project={project} clips={clips} selectedIds={selectedIds} onSelect={select} onDelete={removeSelected} onDuplicate={duplicateSelected} onReorder={reorder} onVisibility={setItemVisibility} onLock={setItemLocked} onRename={renameItem} /></aside>
       <StudioViewport project={project} clips={clips} selectedIds={selectedIds} activeTool={activeTool} onTool={setActiveTool} onSelect={select} onUpdateItems={updateItems} onAddAnnotation={addAnnotation} onUpdateAnnotation={updateAnnotation} onUpdateAnnotations={updateAnnotations} onAddRedaction={addRedaction} onUpdateRedaction={updateRedaction} onUpdateRedactions={updateRedactions} onSetViewport={setViewport} onStageReady={(stage) => { stageRef.current = stage; }} />
