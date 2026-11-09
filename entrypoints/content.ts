@@ -1,3 +1,4 @@
+import themeCss from '../src/styles/theme.css?raw';
 import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { canvasToBlob, canvasToThumbnailBlob, cropCanvasByCssSelection, imageToCanvas, loadImage } from '../src/modules/image-processing/canvas';
@@ -12,25 +13,32 @@ const HOST_ID = 'lassoclip-overlay-host';
 
 const css = `
 :host { all: initial; }
+${themeCss.replace(':root', ':host')}
 * { box-sizing: border-box; }
-.shell { position: fixed; inset: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #f8fafc; user-select: none; }
-.stage { position: absolute; inset: 0; overflow: hidden; background: #0f172a; }
+.shell { position: fixed; inset: 0; font-family: Inter, ui-sans-serif, system-ui, "Microsoft YaHei", sans-serif; color: var(--text); user-select: none; }
+.stage { position: absolute; inset: 0; overflow: hidden; background: var(--subtle); }
 .stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
 .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
-.magnifier { position: absolute; width: 154px; height: 154px; display: none; overflow: hidden; border: 2px solid #c4b5fd; border-radius: 50%; background: #0f172a; box-shadow: 0 12px 32px rgba(0,0,0,.45); pointer-events: none; }
+.magnifier { position: absolute; width: 154px; height: 154px; display: none; overflow: hidden; border: 2px solid var(--surface); outline: 1px solid var(--accent); border-radius: 12px; background: var(--bg); box-shadow: 0 8px 28px rgba(41,40,35,.18); pointer-events: none; }
 .magnifier canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-.magnifier .coords { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); padding: 2px 5px; border-radius: 4px; color: #fff; background: rgba(15,23,42,.78); font: 10px ui-monospace, monospace; white-space: nowrap; }
-.toolbar { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 8px; border: 1px solid rgba(255,255,255,.14); border-radius: 14px; background: rgba(15,23,42,.9); box-shadow: 0 18px 50px rgba(0,0,0,.35); backdrop-filter: blur(14px); }
-.toolbar button { border: 0; border-radius: 9px; padding: 8px 11px; color: #cbd5e1; background: transparent; cursor: pointer; font-size: 12px; }
-.toolbar button:hover { background: rgba(148,163,184,.18); color: white; }
-.toolbar button.active { background: #7c3aed; color: white; }
-.toolbar .divider { width: 1px; height: 22px; background: rgba(255,255,255,.16); margin: 0 4px; }
-.toolbar .confirm { background: #10b981; color: #052e16; font-weight: 700; }
-.toolbar .cancel { background: rgba(248,113,113,.16); color: #fecaca; }
-.hint { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 13px; border: 1px solid rgba(255,255,255,.12); border-radius: 999px; background: rgba(15,23,42,.78); color: #cbd5e1; font-size: 12px; }
-.toast { position: absolute; right: 20px; bottom: 20px; padding: 10px 14px; border-radius: 10px; background: #0f172a; color: #f8fafc; box-shadow: 0 12px 30px rgba(0,0,0,.3); font-size: 13px; }
-.success-actions { position: absolute; right: 20px; bottom: 20px; display: flex; align-items: center; gap: 7px; padding: 9px; border: 1px solid rgba(196,181,253,.25); border-radius: 12px; background: rgba(15,23,42,.94); box-shadow: 0 12px 30px rgba(0,0,0,.35); }
-.success-actions span { margin-right: 4px; color: #cbd5e1; font-size: 12px; }.success-actions button { padding: 7px 9px; border: 0; border-radius: 7px; color: #ede9fe; background: rgba(124,58,237,.34); cursor: pointer; font-size: 11px; }.success-actions button:hover { background: rgba(124,58,237,.56); }.success-actions .dismiss { color: #94a3b8; background: transparent; }.success-actions .continue { color: #052e16; background: #6ee7b7; font-weight: 700; }
+.magnifier .coords { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text); background: var(--bg); font: 12px ui-monospace, monospace; white-space: nowrap; }
+.toolbar { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px); display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 8px 32px rgba(41,40,35,.18); }
+.toolbar button { border: 1px solid transparent; border-radius: 6px; min-height: 36px; padding: 8px 11px; color: var(--muted); background: transparent; cursor: pointer; font-size: 13px; }
+.toolbar button:hover { background: var(--subtle); color: var(--text); }
+.toolbar button.active { background: var(--hover); color: var(--text); border-color: var(--border); }
+.toolbar .divider { width: 1px; height: 22px; background: var(--border); margin: 0 5px; }
+.toolbar .confirm { background: var(--accent); color: #fff; font-weight: 500; }
+.toolbar .confirm:hover { background: var(--accent-hover); }
+.toolbar .cancel { color: var(--muted); }
+.hint { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px); padding: 9px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--muted); font-size: 12px; line-height: 1.6; text-align: center; box-shadow: 0 4px 16px rgba(41,40,35,.1); }
+.toast { position: absolute; right: 20px; bottom: 20px; max-width: calc(100% - 40px); padding: 12px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); box-shadow: 0 8px 24px rgba(41,40,35,.14); font-size: 13px; overflow-wrap: anywhere; }
+.success-actions { position: absolute; right: 20px; bottom: 20px; max-width: calc(100% - 40px); display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); box-shadow: 0 8px 24px rgba(41,40,35,.14); }
+.success-actions span { margin-right: 6px; color: var(--text); font-size: 13px; }
+.success-actions button { min-height: 34px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: transparent; cursor: pointer; font-size: 12px; }
+.success-actions button:hover { background: var(--subtle); }
+.success-actions .dismiss { color: var(--muted); border-color: transparent; }
+.success-actions .continue { color: #fff; background: var(--accent); border-color: var(--accent); }
+.success-actions .continue:hover { background: var(--accent-hover); }
 `;
 
 function pointFromEvent(event: PointerEvent, canvas: HTMLCanvasElement): Point {
@@ -171,6 +179,8 @@ export class CaptureOverlay {
       const button = document.createElement('button');
       button.textContent = label;
       button.dataset.mode = mode;
+      button.classList.toggle('active', mode === this.mode);
+      button.setAttribute('aria-pressed', String(mode === this.mode));
       button.addEventListener('click', () => this.setMode(mode));
       toolbar.append(button);
     }
@@ -205,7 +215,7 @@ export class CaptureOverlay {
   private setMode(mode: SelectionType): void {
     this.mode = mode;
     this.resetSelection();
-    for (const button of this.toolbar.querySelectorAll<HTMLButtonElement>('button[data-mode]')) button.classList.toggle('active', button.dataset.mode === mode);
+    for (const button of this.toolbar.querySelectorAll<HTMLButtonElement>('button[data-mode]')) { button.classList.toggle('active', button.dataset.mode === mode); button.setAttribute('aria-pressed', String(button.dataset.mode === mode)); };
     this.hint.textContent = mode === 'element' ? '移动到元素上高亮，点击锁定；[ / ] 切换父子元素' : '拖动绘制选区，Enter 确认，Esc 取消';
   }
 
@@ -443,7 +453,7 @@ export class CaptureOverlay {
       this.ctx.fill();
       this.ctx.restore();
       this.ctx.save();
-      this.ctx.strokeStyle = '#a78bfa';
+      this.ctx.strokeStyle = '#b85c3d';
       this.ctx.lineWidth = 2;
       this.ctx.setLineDash([6, 4]);
       this.ctx.beginPath();
@@ -453,28 +463,45 @@ export class CaptureOverlay {
         const points = selection.points ?? rectToPoints(selection.bounds);
         if (points.length) this.drawSmoothPath(this.ctx, points, !this.startPoint);
       }
-      this.ctx.stroke();
+      this.strokeSelectionPath();
       this.ctx.restore();
     } else if (this.mode === 'polygon' && this.points.length && this.livePoint) {
       this.ctx.save();
-      this.ctx.strokeStyle = '#c4b5fd';
+      this.ctx.strokeStyle = '#b85c3d';
       this.ctx.lineWidth = 2;
       this.ctx.beginPath();
       this.drawSmoothPath(this.ctx, [...this.points, this.livePoint], false);
-      this.ctx.stroke();
+      this.strokeSelectionPath();
       this.ctx.restore();
     }
     if (this.mode === 'element' && this.candidateElement && !this.selection) {
       const rect = this.elementRect(this.candidateElement);
-      this.ctx.save(); this.ctx.strokeStyle = '#34d399'; this.ctx.lineWidth = 2; this.ctx.setLineDash([5, 3]); this.ctx.strokeRect(rect.x, rect.y, rect.width, rect.height); this.ctx.restore();
+      this.ctx.save(); this.ctx.beginPath(); this.ctx.rect(rect.x, rect.y, rect.width, rect.height); this.strokeSelectionPath(); this.ctx.restore();
     }
     if (this.mode === 'element' && this.selection?.type === 'element') {
       const bounds = this.selection.bounds;
       this.ctx.save();
-      this.ctx.fillStyle = '#34d399';
+      this.ctx.fillStyle = '#b85c3d';
       this.ctx.fillRect(bounds.x + bounds.width - 5, bounds.y + bounds.height - 5, 10, 10);
       this.ctx.restore();
     }
+  }
+
+  /** Keep the selection visible over both light and dark webpage content. */
+  private strokeSelectionPath(): void {
+    this.ctx.save();
+    this.ctx.setLineDash([]);
+    this.ctx.strokeStyle = 'rgba(0,0,0,.65)';
+    this.ctx.lineWidth = 4;
+    this.ctx.stroke();
+    this.ctx.strokeStyle = '#fff';
+    this.ctx.lineWidth = 2.5;
+    this.ctx.stroke();
+    this.ctx.setLineDash([6, 4]);
+    this.ctx.strokeStyle = '#b85c3d';
+    this.ctx.lineWidth = 1.5;
+    this.ctx.stroke();
+    this.ctx.restore();
   }
 
   private drawSmoothPath(ctx: CanvasRenderingContext2D, points: readonly Point[], close: boolean): void {

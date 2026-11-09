@@ -1,0 +1,37 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  color: #292823;
+  background: #faf9f5;
+  --bg: #faf9f5;
+  --surface: #ffffff;
+  --subtle: #f0eee6;
+  --hover: #e9e6dd;
+  --text: #292823;
+  --muted: #706d64;
+  --border: #e3e0d7;
+  --accent: #b85c3d;
+  --accent-hover: #9e4d32;
+  --accent-soft: #f5e9e2;
+  --success: #427354;
+  --success-soft: #edf3ed;
+  --danger: #b13f3f;
+  --danger-soft: #fbefed;
+  --warning: #8a6425;
+  --warning-soft: #faf2df;
+  --checker: repeating-conic-gradient(#f1efe9 0% 25%, #faf9f5 0% 50%) 50% / 16px 16px;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; transition: background-color .15s, border-color .15s, color .15s; }
+button, input, select, textarea, a { -webkit-tap-highlight-color: transparent; }
+button:disabled { cursor: not-allowed; opacity: .45; }
+:is(button, input, select, textarea, a, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+input, select, textarea { accent-color: var(--accent); }
+::selection { color: var(--text); background: #ead5c7; }
+.icon { width: 18px; height: 18px; flex-shrink: 0; vertical-align: middle; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

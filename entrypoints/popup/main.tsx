@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { browser } from 'wxt/browser';
 import { listClipSummaries } from '../../src/modules/storage/clipStore';
+import { Icon } from '../../src/components/Icon';
 import '../../src/styles/popup.css';
 
 function Popup(): React.JSX.Element {
@@ -55,22 +56,20 @@ function Popup(): React.JSX.Element {
     <main className="popup-shell">
       <header className="brand-row">
         <div className="brand-mark">L</div>
-        <div><div className="brand-name">LassoClip</div><div className="brand-tag">Capture anything. Shape it. Reuse it.</div></div>
+        <div><div className="brand-name">LassoClip</div><div className="brand-tag">留住灵感，自由创作</div></div>
       </header>
       <section className="hero-card">
-        <div className="eyebrow">QUICK CLIP</div>
-        <h1>把网页上的视觉内容剪下来</h1>
-        <p>冻结当前画面，使用自由形状、几何选区或元素吸附完成一次剪藏。</p>
-        <button className="primary-button" onClick={() => void startCapture()}><span>⌁</span> 开始截图</button>
+        <h1>剪藏此刻的灵感</h1>
+        <p>框选网页上的喜欢之处，<br />收进你的视觉素材库。</p>
+        <button className="primary-button" onClick={() => void startCapture()}><Icon name="capture" /> 开始截图</button>
         <div className="shortcut">快捷键 <kbd>Alt</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>L</kbd></div>
       </section>
-      {projectCapture.active && <section className="project-capture-card"><div className="eyebrow">CLIP BOARD</div><strong>连续剪藏到「{projectCapture.projectName || '当前项目'}」</strong><p>后续截图会自动保存并加入这个项目。</p><div className="project-capture-actions"><button className="primary-button compact" onClick={() => void startCapture()}>在当前网页截图</button><button className="text-button" onClick={() => void exitProjectCapture()}>退出模式</button></div></section>}
+      {projectCapture.active && <section className="project-capture-card"><div className="eyebrow">连续剪藏中</div><strong>保存到「{projectCapture.projectName || '当前项目'}」</strong><p>下一次截图将自动加入此项目。</p><button className="text-button" onClick={() => void exitProjectCapture()}>退出连续剪藏</button></section>}
       <section className="quick-grid">
-        <button className="secondary-card" onClick={() => void startCapture()}><span className="card-icon purple">✦</span><span><b>Quick Clip</b><small>快速生成透明 PNG</small></span><span className="arrow">↗</span></button>
-        <button className="secondary-card" onClick={() => void openLibrary()}><span className="card-icon blue">▦</span><span><b>Clip Library</b><small>浏览全部素材</small></span><span className="arrow">↗</span></button>
+        <button className="secondary-card" onClick={() => void openLibrary()}><Icon name="grid" /><span><b>素材库</b><small>浏览剪藏</small></span><Icon name="arrowUpRight" /></button>
+        <button className="secondary-card" onClick={() => void openEditor()}><Icon name="edit" /><span><b>编辑器</b><small>自由创作</small></span><Icon name="arrowUpRight" /></button>
       </section>
-      <button className="popup-studio-link" onClick={() => void openEditor()}>直接打开 Clip Studio <span>↗</span></button>
-      <footer className="footer-row"><span>本地素材 <b>{recentCount}</b></span><span className="status"><i /> {status}</span></footer>
+      <footer className="footer-row"><span>本地素材 <b>{recentCount}</b></span><span className="status" role="status">{status}</span></footer>
     </main>
   );
 }

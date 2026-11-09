@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Icon } from '../Icon';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { copyBlobToClipboard, renderProjectToBlob, resolveExportDimensions, type ExportFormat } from '../../modules/canvas-editor/export';
 import type { ClipItemRecord, ClipItemSummary } from '../../types/capture';
 import type { ClipProject } from '../../types/editor';
@@ -10,6 +11,12 @@ interface ExportDialogProps { project: ClipProject; clips: ClipItemSummary[]; on
 function extension(format: ExportFormat): string { return format === 'jpeg' ? 'jpg' : format; }
 
 export function ExportDialog({ project, clips, onClose }: ExportDialogProps): React.JSX.Element {
+  const dialogRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
+    dialogRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    return () => previousFocus?.focus();
+  }, []);
   const [format, setFormat] = useState<ExportFormat>('png');
   const [scale, setScale] = useState(2);
   const [width, setWidth] = useState('');
@@ -54,12 +61,20 @@ export function ExportDialog({ project, clips, onClose }: ExportDialogProps): Re
   const copy = async () => { try { setActionState('正在复制…'); await copyBlobToClipboard(await renderProjectToBlob(project, loadedClips, { ...options, format: 'png' })); setActionState('已复制到剪贴板'); } catch (error) { setActionState(error instanceof Error ? error.message : '复制失败'); } };
 
   return <div className="export-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="export-dialog" role="dialog" aria-modal="true" aria-label="导出设置">
-      <div className="export-heading"><div><span className="panel-kicker">EXPORT STUDIO</span><h2>导出与分享</h2></div><button className="dialog-close" onClick={onClose} aria-label="关闭">×</button></div>
+    <section ref={dialogRef} className="export-dialog" role="dialog" aria-modal="true" aria-label="导出设置" onKeyDown={(event) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); }
+      if (event.key === 'Tab') {
+        const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)'));
+        const first = controls[0]; const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    }}>
+      <div className="export-heading"><div><span className="panel-kicker">导出设置</span><h2>导出与分享</h2></div><button className="dialog-close" onClick={onClose} aria-label="关闭"><Icon name="close" /></button></div>
       <div className="export-body"><div className="export-preview"><div className="preview-frame">{previewUrl ? <img src={previewUrl} alt="导出预览" /> : <div className="preview-loading">{previewState}</div>}</div><div className="preview-meta"><span>{previewState}</span><span>{dimensions.width} × {dimensions.height}px{dimensions.clamped ? ' · 已按浏览器上限缩小' : ''}</span></div></div>
         <div className="export-controls"><label>格式<select value={format} onChange={(event) => { const next = event.target.value as ExportFormat; setFormat(next); if (next === 'jpeg') setTransparent(false); }}><option value="png">PNG · 透明</option><option value="jpeg">JPG · 通用</option><option value="webp">WebP · 高效</option></select></label>
           <label>分辨率<select value={scale} onChange={(event) => setScale(Number(event.target.value))}><option value="1">1x · 标准</option><option value="2">2x · 高清</option><option value="3">3x · 超清</option></select></label>
-          <div className="export-field-row"><label>宽度<input type="number" min="1" value={width} placeholder={String(Math.round(project.canvas.width * scale))} onChange={(event) => setWidthLocked(event.target.value)} /></label><button className={`lock-toggle ${lockAspect ? 'active' : ''}`} onClick={() => setLockAspect((value) => !value)} title="锁定宽高比">{lockAspect ? '锁' : '解'}</button><label>高度<input type="number" min="1" value={height} placeholder={String(Math.round(project.canvas.height * scale))} onChange={(event) => setHeightLocked(event.target.value)} /></label></div>
+          <div className="export-field-row"><label>宽度<input type="number" min="1" value={width} placeholder={String(Math.round(project.canvas.width * scale))} onChange={(event) => setWidthLocked(event.target.value)} /></label><button className={`lock-toggle ${lockAspect ? 'active' : ''}`} onClick={() => setLockAspect((value) => !value)} title="锁定宽高比" aria-label="锁定宽高比"><Icon name={lockAspect ? 'lock' : 'unlock'} /></button><label>高度<input type="number" min="1" value={height} placeholder={String(Math.round(project.canvas.height * scale))} onChange={(event) => setHeightLocked(event.target.value)} /></label></div>
           <label className="checkbox-row"><input type="checkbox" checked={lockAspect} onChange={(event) => setLockAspect(event.target.checked)} />锁定宽高比</label>
           <label className="checkbox-row"><input type="checkbox" checked={transparent && format !== 'jpeg'} disabled={format === 'jpeg'} onChange={(event) => setTransparent(event.target.checked)} />透明背景</label>
           {!transparent || format === 'jpeg' ? <label>背景颜色<input type="color" value={background} onChange={(event) => setBackground(event.target.value)} /></label> : null}

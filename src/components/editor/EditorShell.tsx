@@ -14,6 +14,8 @@ import { promptProjectName } from '../../modules/projects/projectName';
 import '../../styles/editor.css';
 
 export function EditorShell(): React.JSX.Element {
+  const [leftTab, setLeftTab] = useState<'assets' | 'layers'>('assets');
+  const [inspectorOpen, setInspectorOpen] = useState(() => window.innerWidth >= 1100);
   const project = useEditorStore((state) => state.project);
   const clips = useEditorStore((state) => state.clips);
   const selectedIds = useEditorStore((state) => state.selectedIds);
@@ -51,7 +53,7 @@ export function EditorShell(): React.JSX.Element {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) return;
+      if (event.defaultPrevented || target?.closest('input, textarea, select, button, [role="dialog"]') || target?.isContentEditable) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); }
       else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); redo(); }
       else if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); removeSelected(); }
@@ -88,10 +90,10 @@ export function EditorShell(): React.JSX.Element {
   }, [project?.updatedAt, save, status]);
 
   if (status === 'error' && !project) return <main className="editor-state error-state"><h1>项目暂时无法打开</h1><p>{error}</p><button onClick={() => void load(projectId)}>重试</button></main>;
-  if (status === 'loading' || !project) return <main className="editor-state"><div className="state-orb">L</div><h1>正在打开 Clip Studio</h1><p>正在读取本地项目与剪藏素材…</p></main>;
+  if (status === 'loading' || !project) return <main className="editor-state"><div className="state-orb">L</div><h1>正在打开编辑器</h1><p>正在读取本地项目与剪藏素材…</p></main>;
   const selected = selectedEntity(project, selectedIds);
   const toggleLayout = () => setLayoutMode(project.canvas.layoutMode === 'auto' ? 'free' : 'auto');
-  const focusAssets = () => document.querySelector<HTMLElement>('.asset-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const focusAssets = () => { setLeftTab('assets'); requestAnimationFrame(() => document.querySelector<HTMLElement>('.asset-panel')?.scrollIntoView({ block: 'nearest' })); };
   const setGradient = () => setBackground({ type: 'linear-gradient', value: 'linear-gradient(135deg, #f8fafc, #c4b5fd)' });
   const startProjectCapture = async () => {
     setCaptureNotice('正在启动项目剪藏模式…');
@@ -115,12 +117,12 @@ export function EditorShell(): React.JSX.Element {
     await refreshProjects();
   };
   return <main className="editor-app">
-    <EditorToolbar project={project} projects={projects} status={status === 'saving' ? '保存中' : error ? '错误' : '已保存'} canUndo={history.length > 0} canRedo={future.length > 0} activeTool={activeTool} onTool={setActiveTool} onOpenProject={(id) => void load(id)} onNewProject={createNamedProject} onRenameProject={(name) => void renameCurrentProject(name)} onUndo={undo} onRedo={redo} onAddAsset={focusAssets} onAutoLayout={autoLayout} onToggleLayout={toggleLayout} onBackground={setBackground} onGradient={setGradient} onExport={() => setExportOpen(true)} onOpenLibrary={() => void browser.tabs.create({ url: browser.runtime.getURL(`/library.html?projectId=${encodeURIComponent(project.id)}` as never) })} projectCaptureActive={projectCaptureActive && projectCaptureProjectId === project.id} projectCaptureName={projectCaptureName} onStartProjectCapture={() => void startProjectCapture()} onStopProjectCapture={() => void stopProjectCapture()} />
+    <EditorToolbar project={project} projects={projects} status={status === 'saving' ? '保存中' : error ? '错误' : '已保存'} canUndo={history.length > 0} canRedo={future.length > 0} activeTool={activeTool} onTool={setActiveTool} onOpenProject={(id) => void load(id)} onNewProject={createNamedProject} onRenameProject={(name) => void renameCurrentProject(name)} onUndo={undo} onRedo={redo} onAddAsset={focusAssets} onAutoLayout={autoLayout} onToggleLayout={toggleLayout} onBackground={setBackground} onGradient={setGradient} onExport={() => setExportOpen(true)} onOpenLibrary={() => void browser.tabs.create({ url: browser.runtime.getURL(`/library.html?projectId=${encodeURIComponent(project.id)}` as never) })} projectCaptureActive={projectCaptureActive && projectCaptureProjectId === project.id} projectCaptureName={projectCaptureName} onStartProjectCapture={() => void startProjectCapture()} onStopProjectCapture={() => void stopProjectCapture()} inspectorOpen={inspectorOpen} onToggleInspector={() => setInspectorOpen((open) => !open)} />
     {(error || captureNotice) && <div className="editor-alert">{error ?? captureNotice}</div>}
-    <div className="editor-grid">
-      <aside className="left-rail"><AssetPanel clips={clips} project={project} onAdd={addClip} /><LayerPanel project={project} clips={clips} selectedIds={selectedIds} onSelect={select} onDelete={removeSelected} onDuplicate={duplicateSelected} onReorder={reorder} onVisibility={setItemVisibility} onLock={setItemLocked} onRename={renameItem} /></aside>
+    <div className={`editor-grid ${inspectorOpen ? '' : 'inspector-hidden'}`}>
+      <aside className="left-rail"><div className="rail-tabs" role="tablist" aria-label="编辑器侧栏"><button id="assets-tab" role="tab" aria-selected={leftTab === 'assets'} aria-controls="assets-panel" onClick={() => setLeftTab('assets')}>素材</button><button id="layers-tab" role="tab" aria-selected={leftTab === 'layers'} aria-controls="layers-panel" onClick={() => setLeftTab('layers')}>图层</button></div><div id="assets-panel" role="tabpanel" aria-labelledby="assets-tab" hidden={leftTab !== 'assets'}><AssetPanel clips={clips} project={project} onAdd={addClip} /></div><div id="layers-panel" role="tabpanel" aria-labelledby="layers-tab" hidden={leftTab !== 'layers'}><LayerPanel project={project} clips={clips} selectedIds={selectedIds} onSelect={select} onDelete={removeSelected} onDuplicate={duplicateSelected} onReorder={reorder} onVisibility={setItemVisibility} onLock={setItemLocked} onRename={renameItem} /></div></aside>
       <StudioViewport project={project} clips={clips} selectedIds={selectedIds} activeTool={activeTool} onTool={setActiveTool} onSelect={select} onUpdateItems={updateItems} onAddAnnotation={addAnnotation} onUpdateAnnotation={updateAnnotation} onUpdateAnnotations={updateAnnotations} onAddRedaction={addRedaction} onUpdateRedaction={updateRedaction} onUpdateRedactions={updateRedactions} onSetViewport={setViewport} onStageReady={(stage) => { stageRef.current = stage; }} />
-      <InspectorPanel project={project} clips={clips} selectedLayer={selected} onUpdateItem={updateItem} onUpdateItemStyle={updateItemStyle} onUpdateAnnotation={updateAnnotation} onUpdateRedaction={updateRedaction} />
+      <aside id="editor-inspector" className="editor-inspector" hidden={!inspectorOpen}><InspectorPanel project={project} clips={clips} selectedLayer={selected} onUpdateItem={updateItem} onUpdateItemStyle={updateItemStyle} onUpdateAnnotation={updateAnnotation} onUpdateRedaction={updateRedaction} /></aside>
     </div>
     {exportOpen && <ExportDialog project={project} clips={clips} onClose={() => setExportOpen(false)} />}
   </main>;

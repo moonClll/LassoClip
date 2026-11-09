@@ -2,12 +2,26 @@ import { readFileSync } from 'node:fs';
 
 describe('Clip Studio fixed viewport layout contract', () => {
   it('keeps page scrolling disabled while allowing panel-local scrolling', () => {
-    const css = readFileSync('src/styles/editor.css', 'utf8');
-    expect(css).toContain('.editor-app { height: 100vh;');
-    expect(css).toContain('overflow: hidden; background: radial-gradient');
-    expect(css).toContain('.editor-grid { flex: 1 1 auto;');
-    expect(css).toContain('min-height: 0; overflow: hidden;');
-    expect(css).toContain('.asset-panel { flex: 1 1 58%; overflow: auto;');
-    expect(css).toContain('.inspector-panel { min-height: 0; overflow: auto;');
+    const style = document.createElement('style');
+    style.textContent = readFileSync('src/styles/editor.css', 'utf8').replace(/@import[^;]+;/g, '');
+    document.head.append(style);
+    try {
+      const declarations = (selector: string): CSSStyleDeclaration => {
+        const rule = Array.from(style.sheet!.cssRules).find((entry) => 'selectorText' in entry && entry.selectorText === selector) as CSSStyleRule | undefined;
+        expect(rule, `Missing layout rule: ${selector}`).toBeDefined();
+        return rule!.style;
+      };
+      expect(declarations('body').overflow).toBe('hidden');
+      expect(declarations('.editor-app').height).toBe('100vh');
+      expect(declarations('.editor-app').overflow).toBe('hidden');
+      expect(declarations('.editor-grid').flex).toBe('1 1 auto');
+      expect(declarations('.editor-grid').getPropertyValue('min-height')).toBe('0');
+      expect(declarations('.editor-grid').overflow).toBe('hidden');
+      for (const selector of ['.asset-panel', '.layer-panel', '.inspector-panel']) {
+        expect(declarations(selector).overflow).toBe('auto');
+      }
+    } finally {
+      style.remove();
+    }
   });
 });
