@@ -1,3 +1,4 @@
+import { createDrawingAnnotation, createTextAnnotation, drawingBounds } from '../../modules/canvas-editor/drawing';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Arrow, Ellipse, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Text, Transformer } from 'react-konva';
@@ -5,7 +6,7 @@ import type { ClipItemSummary, Point } from '../../types/capture';
 import { getClipImageBlob } from '../../modules/storage/clipStore';
 import { diagnosticError, describeBlob, logImageDiagnostic } from '../../modules/media/imageDiagnostics';
 import { loadBlobImage, revokeBlobObjectUrl } from '../../modules/media/imageLoader';
-import { annotationSelectionId, redactionSelectionId, type Annotation, type AnnotationDraft, type CanvasItem, type ClipProject, type EditorTool, type Redaction } from '../../types/editor';
+import { annotationSelectionId, redactionSelectionId, type Annotation, type AnnotationDraft, type AnnotationStyle, type CanvasItem, type ClipProject, type EditorTool, type Redaction } from '../../types/editor';
 import { itemBounds, rectIntersects, snapPosition, type SnapGuide } from '../../modules/canvas-editor/transform';
 
 interface StudioViewportProps {
@@ -13,6 +14,7 @@ interface StudioViewportProps {
   clips: ClipItemSummary[];
   selectedIds: string[];
   activeTool: EditorTool;
+  toolStyle: AnnotationStyle;
   onTool: (tool: EditorTool) => void;
   onSelect: (ids: string[]) => void;
   onUpdateItems: (updates: Array<{ id: string; transform: Partial<CanvasItem['transform']> }>) => void;
@@ -48,7 +50,7 @@ function selectionForAnnotation(annotation: Annotation): string { return annotat
 function selectionForRedaction(redaction: Redaction): string { return redactionSelectionId(redaction.id); }
 function toCanvasPoint(stage: Konva.Stage, origin: Point, scale: number): Point { const pointer = stage.getPointerPosition(); return pointer ? { x: (pointer.x - origin.x) / scale, y: (pointer.y - origin.y) / scale } : { x: 0, y: 0 }; }
 
-export function StudioViewport({ project, clips, selectedIds, activeTool, onTool, onSelect, onUpdateItems, onAddAnnotation, onUpdateAnnotation, onUpdateAnnotations, onAddRedaction, onUpdateRedaction, onUpdateRedactions, onSetViewport, onStageReady }: StudioViewportProps): React.JSX.Element {
+export function StudioViewport({ project, clips, selectedIds, activeTool, toolStyle, onTool, onSelect, onUpdateItems, onAddAnnotation, onUpdateAnnotation, onUpdateAnnotations, onAddRedaction, onUpdateRedaction, onUpdateRedactions, onSetViewport, onStageReady }: StudioViewportProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const transformerRef = useRef<Konva.Transformer | null>(null);
@@ -103,9 +105,9 @@ export function StudioViewport({ project, clips, selectedIds, activeTool, onTool
 
   useEffect(() => {
     const locked = new Set([...project.items.filter((item) => item.locked).map((item) => item.id), ...project.annotations.filter((annotation) => annotation.locked).map(selectionForAnnotation), ...project.redactions.filter((redaction) => redaction.locked).map(selectionForRedaction)]);
-    const nodes = selectedIds.filter((id) => !locked.has(id)).map((id) => nodeRefs.current.get(id)).filter((node): node is Konva.Node => Boolean(node));
+    const nodes = (activeTool === 'select' ? selectedIds : []).filter((id) => !locked.has(id)).map((id) => nodeRefs.current.get(id)).filter((node): node is Konva.Node => Boolean(node));
     transformerRef.current?.nodes(nodes); transformerRef.current?.getLayer()?.batchDraw();
-  }, [selectedIds, images, project.items, project.annotations, project.redactions]);
+  }, [activeTool, selectedIds, images, project.items, project.annotations, project.redactions]);
 
   const pointerInCanvas = () => stageRef.current ? toCanvasPoint(stageRef.current, origin, scale) : { x: 0, y: 0 };
   const updateViewportFromWheel = (event: Konva.KonvaEventObject<WheelEvent>) => {
@@ -164,18 +166,26 @@ export function StudioViewport({ project, clips, selectedIds, activeTool, onTool
   const moveDrawing = () => { if (!drawRef.current) return; drawRef.current.points = [...drawRef.current.points, pointerInCanvas()]; setDrawPreview({ ...drawRef.current, points: [...drawRef.current.points] }); };
   const finishDrawing = () => {
     const drawing = drawRef.current; drawRef.current = null; setDrawPreview(null); if (!drawing) return;
-    const end = drawing.points[drawing.points.length - 1]; const minX = Math.min(drawing.start.x, ...drawing.points.map((point) => point.x)); const minY = Math.min(drawing.start.y, ...drawing.points.map((point) => point.y)); const maxX = Math.max(drawing.start.x, ...drawing.points.map((point) => point.x)); const maxY = Math.max(drawing.start.y, ...drawing.points.map((point) => point.y));
-    const points = drawing.points.map((point) => ({ x: point.x - minX, y: point.y - minY })); const width = Math.max(2, maxX - minX); const height = Math.max(2, maxY - minY);
-    if (activeTool.startsWith('redact-')) { const type = activeTool.replace('redact-', '') as Redaction['type']; onAddRedaction({ name: `${type} 遮挡`, type, transform: { x: minX, y: minY, width, height, rotation: 0, opacity: 1 }, bounds: { x: minX, y: minY, width, height }, visible: true, locked: false, style: { color: '#111827', opacity: 1, blurRadius: 12, pixelSize: 10 } }); }
-    else if (activeTool !== 'select' && activeTool !== 'text') { const annotationType = activeTool as Exclude<Annotation['type'], 'text'>; onAddAnnotation({ name: `${activeTool} 标注`, type: annotationType, transform: { x: minX, y: minY, width, height, rotation: 0, opacity: 1 }, visible: true, locked: false, points, style: { stroke: activeTool === 'highlight' ? 'rgba(250,204,21,.48)' : '#7c3aed', fill: activeTool === 'rectangle' || activeTool === 'ellipse' ? 'rgba(124,58,237,.12)' : undefined, strokeWidth: activeTool === 'highlight' ? 18 : 3, opacity: 1, arrowSize: 12 } }); }
-    onTool('select'); void end;
+    const bounds = drawingBounds(drawing);
+    if (drawing.points.length < 2) return;
+    if (activeTool.startsWith('redact-')) {
+      const type = activeTool.replace('redact-', '') as Redaction['type'];
+      onAddRedaction({ name: `${{ blur: '模糊', pixelate: '像素化', solid: '实色' }[type]}遮挡`, type, transform: { ...bounds, rotation: 0, opacity: 1 }, bounds, visible: true, locked: false, style: { color: '#111827', opacity: 1, blurRadius: 12, pixelSize: 10 } });
+    } else {
+      const annotation = createDrawingAnnotation(activeTool, drawing, toolStyle);
+      if (annotation) onAddAnnotation(annotation);
+    }
   };
 
   const handleStageDown = (event: Konva.KonvaEventObject<MouseEvent>) => {
     const stage = event.target.getStage(); if (!stage) return;
     if (spaceHeld || event.evt.button === 1) { event.cancelBubble = true; beginPan(); return; }
     const isCanvas = event.target === stage || event.target.name() === 'canvas-background';
-    if (activeTool === 'text') { const point = pointerInCanvas(); const text = window.prompt('输入文字标注'); if (text) onAddAnnotation({ name: '文字标注', type: 'text', transform: { x: point.x, y: point.y, width: 240, height: 48, rotation: 0, opacity: 1 }, text, visible: true, locked: false, style: { fill: '#111827', fontSize: 24, fontFamily: 'Inter, sans-serif' } }); onTool('select'); return; }
+    if (activeTool === 'text') {
+      const point = pointerInCanvas(); const text = window.prompt('输入文字标注');
+      if (text) onAddAnnotation(createTextAnnotation(text, point, toolStyle));
+      return;
+    }
     if (activeTool !== 'select') { beginDrawing(); return; }
     if (!isCanvas) return;
     if (!event.evt.shiftKey) onSelect([]); beginSelectRect();
@@ -185,31 +195,31 @@ export function StudioViewport({ project, clips, selectedIds, activeTool, onTool
   const resetView = (zoom: number) => onSetViewport(zoom, { x: 0, y: 0 });
 
   const registerNode = (id: string) => (node: Konva.Node | null) => { if (node) nodeRefs.current.set(id, node); else nodeRefs.current.delete(id); };
-  const selectNode = (id: string, event: Konva.KonvaEventObject<MouseEvent>) => { const selected = selectedIds.includes(id); onSelect(event.evt.shiftKey ? (selected ? selectedIds.filter((value) => value !== id) : [...selectedIds, id]) : [id]); };
-  const commonNode = (id: string, transform: CanvasItem['transform'] | Annotation['transform'] | Redaction['transform']) => ({ id, x: transform.x + transform.width / 2, y: transform.y + transform.height / 2, width: transform.width, height: transform.height, offsetX: transform.width / 2, offsetY: transform.height / 2, rotation: transform.rotation, opacity: transform.opacity, ref: registerNode(id), draggable: !spaceHeld });
+  const selectNode = (id: string, event: Konva.KonvaEventObject<MouseEvent>) => { if (activeTool !== 'select' || spaceHeld) return; const selected = selectedIds.includes(id); onSelect(event.evt.shiftKey ? (selected ? selectedIds.filter((value) => value !== id) : [...selectedIds, id]) : [id]); };
+  const commonNode = (id: string, transform: CanvasItem['transform'] | Annotation['transform'] | Redaction['transform']) => ({ id, x: transform.x + transform.width / 2, y: transform.y + transform.height / 2, width: transform.width, height: transform.height, offsetX: transform.width / 2, offsetY: transform.height / 2, rotation: transform.rotation, opacity: transform.opacity, ref: registerNode(id), draggable: activeTool === 'select' && !spaceHeld });
   const renderAnnotation = (annotation: Annotation) => {
-    const transform = annotation.transform; const common = commonNode(selectionForAnnotation(annotation), transform); const points = annotation.type === 'text' ? [] : annotation.points.flatMap((point) => [point.x, point.y]);
+    const transform = annotation.transform; const common = { ...commonNode(selectionForAnnotation(annotation), transform), draggable: activeTool === 'select' && !annotation.locked && !spaceHeld }; const points = annotation.type === 'text' ? [] : annotation.points.flatMap((point) => [point.x, point.y]);
     const eventProps = { onMouseDown: (event: Konva.KonvaEventObject<MouseEvent>) => selectNode(selectionForAnnotation(annotation), event), onDragStart: () => beginDrag(selectionForAnnotation(annotation)), onDragMove: () => moveDrag(selectionForAnnotation(annotation)), onDragEnd: endDrag };
-    if (annotation.type === 'text') return <Text key={annotation.id} {...common} {...eventProps} text={annotation.text} fill={annotation.style.fill} fontSize={annotation.style.fontSize} fontFamily={annotation.style.fontFamily} fontStyle={annotation.style.fontStyle} width={transform.width} height={transform.height} />;
+    if (annotation.type === 'text') return <Text key={annotation.id} {...common} {...eventProps} text={annotation.text} fill={annotation.style.fill} fontSize={annotation.style.fontSize} fontFamily={annotation.style.fontFamily} fontStyle={annotation.style.fontStyle} lineHeight={1.25} width={transform.width} height={transform.height} />;
     if (annotation.type === 'rectangle') return <Rect key={annotation.id} {...common} {...eventProps} stroke={annotation.style.stroke} strokeWidth={annotation.style.strokeWidth} fill={annotation.style.fill} />;
-    if (annotation.type === 'ellipse') return <Ellipse key={annotation.id} {...common} {...eventProps} x={common.x} y={common.y} radiusX={transform.width / 2} radiusY={transform.height / 2} stroke={annotation.style.stroke} strokeWidth={annotation.style.strokeWidth} fill={annotation.style.fill} />;
-    return annotation.type === 'arrow' ? <Arrow key={annotation.id} {...common} {...eventProps} points={points} stroke={annotation.style.stroke} strokeWidth={annotation.style.strokeWidth} fill={annotation.style.stroke} pointerLength={annotation.style.arrowSize} pointerWidth={annotation.style.arrowSize} /> : <Line key={annotation.id} {...common} {...eventProps} points={points} stroke={annotation.style.stroke} strokeWidth={annotation.style.strokeWidth} opacity={annotation.style.opacity} lineCap={annotation.style.lineCap} lineJoin={annotation.style.lineJoin} />;
+    if (annotation.type === 'ellipse') return <Ellipse key={annotation.id} {...common} {...eventProps} x={common.x} y={common.y} offsetX={0} offsetY={0} radiusX={transform.width / 2} radiusY={transform.height / 2} stroke={annotation.style.stroke} strokeWidth={annotation.style.strokeWidth} fill={annotation.style.fill} />;
+    return annotation.type === 'arrow' ? <Arrow key={annotation.id} {...common} {...eventProps} points={points} stroke={annotation.style.stroke} strokeWidth={annotation.style.strokeWidth} fill={annotation.style.stroke} pointerLength={annotation.style.arrowSize} pointerWidth={annotation.style.arrowSize} /> : <Line key={annotation.id} {...common} {...eventProps} points={points} stroke={annotation.style.stroke} strokeWidth={annotation.style.strokeWidth} opacity={transform.opacity * (annotation.style.opacity ?? 1)} lineCap={annotation.style.lineCap} lineJoin={annotation.style.lineJoin} />;
   };
 
-  return <div className="studio-viewport" ref={containerRef}>
+  return <div className={`studio-viewport tool-${activeTool}`} ref={containerRef}>
     <div className="viewport-badge"><span>{Math.round(scale * 100)}%</span><button onClick={() => resetView(1)}>适应</button><button onClick={() => resetView(Math.min(4, 1 / Math.max(.01, fitScale)))}>100%</button><button className={snapEnabled ? 'active' : ''} onClick={() => setSnapEnabled((value) => !value)}>吸附</button></div>
     <Stage width={viewport.width} height={viewport.height} ref={(stage) => { stageRef.current = stage; onStageReady(stage); }} onWheel={updateViewportFromWheel} onMouseDown={handleStageDown} onMouseMove={handleStageMove} onMouseUp={handleStageUp}>
       <Layer><Group x={origin.x} y={origin.y} scaleX={scale} scaleY={scale}>
         <Rect name="canvas-background" width={project.canvas.width} height={project.canvas.height} fill={typeof project.canvas.background === 'string' ? project.canvas.background : undefined} fillLinearGradientStartPoint={{ x: 0, y: 0 }} fillLinearGradientEndPoint={{ x: project.canvas.width, y: project.canvas.height }} fillLinearGradientColorStops={typeof project.canvas.background === 'string' ? undefined : [0, '#f8fafc', 1, '#c4b5fd']} shadowColor="#292823" shadowBlur={18} shadowOpacity={.10} />
         {sortedItems.filter((item) => item.visible).map((item) => { const common = commonNode(item.id, item.transform); const selected = selectedIds.includes(item.id); const image = item.type === 'image' ? images.get(item.clipId) : undefined; const props = { onMouseDown: (event: Konva.KonvaEventObject<MouseEvent>) => selectNode(item.id, event), onDragStart: () => beginDrag(item.id), onDragMove: () => moveDrag(item.id), onDragEnd: endDrag };
-          if (item.type === 'image') return image ? <KonvaImage key={item.id} {...common} {...props} image={image} cornerRadius={item.style.cornerRadius} stroke={item.style.border?.color} strokeWidth={item.style.border?.width} shadowColor={item.style.shadow?.color} shadowBlur={item.style.shadow?.blur} shadowOffsetX={item.style.shadow?.offsetX} shadowOffsetY={item.style.shadow?.offsetY} draggable={!item.locked && !spaceHeld} /> : <Group key={item.id} {...common} {...props}><Rect x={-item.transform.width / 2} y={-item.transform.height / 2} width={item.transform.width} height={item.transform.height} fill="#e2e8f0" /><Text text={clipNames.get(item.clipId) ?? '素材加载中'} x={-item.transform.width / 2 + 12} y={-item.transform.height / 2 + 12} fill="#64748b" />{selected && <Rect name="selection-overlay" x={-item.transform.width / 2 - 4} y={-item.transform.height / 2 - 4} width={item.transform.width + 8} height={item.transform.height + 8} stroke="#7c3aed" dash={[6, 4]} listening={false} />}</Group>;
+          if (item.type === 'image') return image ? <KonvaImage key={item.id} {...common} {...props} image={image} cornerRadius={item.style.cornerRadius} stroke={item.style.border?.color} strokeWidth={item.style.border?.width} shadowColor={item.style.shadow?.color} shadowBlur={item.style.shadow?.blur} shadowOffsetX={item.style.shadow?.offsetX} shadowOffsetY={item.style.shadow?.offsetY} draggable={activeTool === 'select' && !item.locked && !spaceHeld} /> : <Group key={item.id} {...common} {...props}><Rect x={-item.transform.width / 2} y={-item.transform.height / 2} width={item.transform.width} height={item.transform.height} fill="#e2e8f0" /><Text text={clipNames.get(item.clipId) ?? '素材加载中'} x={-item.transform.width / 2 + 12} y={-item.transform.height / 2 + 12} fill="#64748b" />{selected && <Rect name="selection-overlay" x={-item.transform.width / 2 - 4} y={-item.transform.height / 2 - 4} width={item.transform.width + 8} height={item.transform.height + 8} stroke="#7c3aed" dash={[6, 4]} listening={false} />}</Group>;
           return <Text key={item.id} {...common} {...props} text={item.type === 'text' ? item.text : item.type} fill="#334155" />;
         })}
         {sortedAnnotations.filter((annotation) => annotation.visible).map(renderAnnotation)}
-        {sortedRedactions.filter((redaction) => redaction.visible).map((redaction) => { const common = commonNode(selectionForRedaction(redaction), redaction.transform); return <Group key={redaction.id} {...common} draggable={!redaction.locked && !spaceHeld} onMouseDown={(event) => selectNode(selectionForRedaction(redaction), event)} onDragStart={() => beginDrag(selectionForRedaction(redaction))} onDragMove={() => moveDrag(selectionForRedaction(redaction))} onDragEnd={endDrag}><Rect x={-redaction.transform.width / 2} y={-redaction.transform.height / 2} width={redaction.transform.width} height={redaction.transform.height} fill={redaction.type === 'solid' ? redaction.style.color : redaction.type === 'pixelate' ? 'rgba(15,23,42,.65)' : 'rgba(96,165,250,.45)'} stroke="#f97316" dash={[5, 3]} /><Text text={redaction.type === 'blur' ? 'BLUR' : redaction.type === 'pixelate' ? 'PIXEL' : 'MASK'} x={-redaction.transform.width / 2 + 6} y={-redaction.transform.height / 2 + 6} fill="#fff" fontSize={11} /> </Group>; })}
+        {sortedRedactions.filter((redaction) => redaction.visible).map((redaction) => { const common = commonNode(selectionForRedaction(redaction), redaction.transform); return <Group key={redaction.id} {...common} draggable={activeTool === 'select' && !redaction.locked && !spaceHeld} onMouseDown={(event) => selectNode(selectionForRedaction(redaction), event)} onDragStart={() => beginDrag(selectionForRedaction(redaction))} onDragMove={() => moveDrag(selectionForRedaction(redaction))} onDragEnd={endDrag}><Rect x={0} y={0} width={redaction.transform.width} height={redaction.transform.height} fill={redaction.type === 'solid' ? redaction.style.color : redaction.type === 'pixelate' ? 'rgba(15,23,42,.65)' : 'rgba(96,165,250,.45)'} stroke="#f97316" dash={[5, 3]} /><Text text={redaction.type === 'blur' ? 'BLUR' : redaction.type === 'pixelate' ? 'PIXEL' : 'MASK'} x={6} y={6} listening={false} fill="#fff" fontSize={11} /></Group>; })}
         {guides.map((guide, index) => guide.axis === 'x' ? <Line name="selection-overlay" key={`guide-x-${index}`} points={[guide.position, 0, guide.position, project.canvas.height]} stroke="#f472b6" strokeWidth={1 / scale} dash={[5 / scale, 4 / scale]} listening={false} /> : <Line name="selection-overlay" key={`guide-y-${index}`} points={[0, guide.position, project.canvas.width, guide.position]} stroke="#f472b6" strokeWidth={1 / scale} dash={[5 / scale, 4 / scale]} listening={false} />)}
         {selectionRect && <Rect name="selection-overlay" x={selectionRect.x} y={selectionRect.y} width={selectionRect.width} height={selectionRect.height} stroke="#b85c3d" strokeWidth={1 / scale} dash={[5 / scale, 4 / scale]} fill="rgba(184,92,61,.10)" listening={false} />}
-        {drawPreview && activeTool !== 'text' && (activeTool.startsWith('redact-') ? <Rect name="selection-overlay" x={Math.min(drawPreview.start.x, drawPreview.points.at(-1)?.x ?? drawPreview.start.x)} y={Math.min(drawPreview.start.y, drawPreview.points.at(-1)?.y ?? drawPreview.start.y)} width={Math.abs((drawPreview.points.at(-1)?.x ?? drawPreview.start.x) - drawPreview.start.x)} height={Math.abs((drawPreview.points.at(-1)?.y ?? drawPreview.start.y) - drawPreview.start.y)} stroke="#f97316" dash={[5, 3]} fill="rgba(249,115,22,.14)" /> : <Line name="selection-overlay" points={drawPreview.points.flatMap((point) => [point.x, point.y])} stroke={activeTool === 'highlight' ? 'rgba(250,204,21,.5)' : '#c4b5fd'} strokeWidth={activeTool === 'highlight' ? 18 / scale : 3 / scale} lineCap="round" lineJoin="round" />)}
+        {drawPreview && activeTool !== 'text' && (activeTool.startsWith('redact-') ? <Rect name="selection-overlay" x={Math.min(drawPreview.start.x, drawPreview.points.at(-1)?.x ?? drawPreview.start.x)} y={Math.min(drawPreview.start.y, drawPreview.points.at(-1)?.y ?? drawPreview.start.y)} width={Math.abs((drawPreview.points.at(-1)?.x ?? drawPreview.start.x) - drawPreview.start.x)} height={Math.abs((drawPreview.points.at(-1)?.y ?? drawPreview.start.y) - drawPreview.start.y)} stroke="#f97316" dash={[5, 3]} fill="rgba(249,115,22,.14)" /> : <Line name="selection-overlay" points={drawPreview.points.flatMap((point) => [point.x, point.y])} stroke={toolStyle.stroke ?? '#b85c3d'} opacity={toolStyle.opacity ?? 1} strokeWidth={toolStyle.strokeWidth ?? 3} lineCap="round" lineJoin="round" />)}
         <Transformer name="selection-overlay transformer" ref={(node) => { transformerRef.current = node; }} borderStroke="#b85c3d" anchorStroke="#b85c3d" anchorFill="#ffffff" anchorCornerRadius={2} rotateEnabled enabledAnchors={['top-left', 'top-center', 'top-right', 'middle-right', 'bottom-right', 'bottom-center', 'bottom-left', 'middle-left']} keepRatio boundBoxFunc={(oldBox, newBox) => Math.abs(newBox.width) < 24 || Math.abs(newBox.height) < 24 ? oldBox : newBox} onTransformEnd={endTransform} shouldOverdrawWholeArea />
       </Group></Layer>
     </Stage>

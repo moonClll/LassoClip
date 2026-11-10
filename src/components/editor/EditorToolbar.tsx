@@ -1,5 +1,7 @@
+import { AnnotationStyleControls } from './AnnotationStyleControls';
+import { isAnnotationTool } from '../../modules/canvas-editor/toolStyle';
 import { useEffect, useRef, useState } from 'react';
-import type { ClipProject, EditorTool } from '../../types/editor';
+import type { AnnotationStyle, AnnotationType, ClipProject, EditorTool } from '../../types/editor';
 import { normalizeProjectName } from '../../modules/projects/projectName';
 import { Icon, type IconName } from '../Icon';
 
@@ -10,6 +12,8 @@ interface EditorToolbarProps {
   canUndo: boolean;
   canRedo: boolean;
   activeTool: EditorTool;
+  toolStyle: AnnotationStyle;
+  onToolStyle: (style: AnnotationStyle) => void;
   onTool: (tool: EditorTool) => void;
   onOpenProject: (id: string) => void;
   onNewProject: () => void;
@@ -76,5 +80,6 @@ export function EditorToolbar(props: EditorToolbarProps): React.JSX.Element {
       <div className="canvas-actions"><button className="toolbar-button" onClick={props.onAddAsset}>添加素材</button><button className="toolbar-button" onClick={props.onAutoLayout}>自动排版</button><button className={`toolbar-button ${props.project.canvas.layoutMode === 'free' ? 'active' : ''}`} onClick={props.onToggleLayout}>{props.project.canvas.layoutMode === 'free' ? '自由布局' : '自动布局'}</button><label className="background-picker" title="画布背景颜色"><input type="color" value={background} onChange={(event) => props.onBackground(event.target.value)} aria-label="画布背景颜色" /></label><button className="toolbar-button" onClick={props.onGradient}>渐变</button></div>
       <button className={`toolbar-button inspector-toggle ${props.inspectorOpen ? 'active' : ''}`} onClick={props.onToggleInspector} aria-expanded={props.inspectorOpen} aria-controls="editor-inspector">属性</button>
     </div>
+    {isAnnotationTool(props.activeTool) && <div className="tool-options" role="group" aria-label="当前工具样式"><span className="tool-options-label">{tools.find((tool) => tool.id === props.activeTool)?.label}</span><AnnotationStyleControls type={props.activeTool as AnnotationType} style={props.toolStyle} onChange={props.onToolStyle} /><span className="tool-options-hint">点击或拖动画布以连续添加 · Esc 返回选择</span></div>}
   </>;
 }

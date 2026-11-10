@@ -143,7 +143,7 @@ function drawAnnotation(context: CanvasRenderingContext2D, annotation: Annotatio
       context.moveTo(points[0].x * scale, points[0].y * scale);
       for (const point of points.slice(1)) context.lineTo(point.x * scale, point.y * scale);
       const isArrow = annotation.type === 'arrow';
-      if (annotation.type === 'highlight') { context.lineWidth = Math.max(12 * scale, (style.strokeWidth ?? 18) * scale); context.strokeStyle = style.stroke ?? 'rgba(250,204,21,.45)'; }
+      if (annotation.type === 'highlight') { context.lineWidth = Math.max(1 * scale, (style.strokeWidth ?? 18) * scale); context.strokeStyle = style.stroke ?? 'rgba(250,204,21,.45)'; }
       if (isArrow) {
         const end = points[points.length - 1];
         const previous = points[points.length - 2];
