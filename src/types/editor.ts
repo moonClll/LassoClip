@@ -1,7 +1,7 @@
 import type { ClipItemRecord, Point } from './capture';
 
 export type ProjectLayoutMode = 'auto' | 'free';
-export type EditorTool = 'select' | 'text' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'drawing' | 'highlight' | 'redact-blur' | 'redact-pixelate' | 'redact-solid';
+export type EditorTool = 'select' | 'text' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'drawing' | 'highlight' | 'redact-blur' | 'eraser';
 
 export interface GradientBackground {
   type: 'linear-gradient';
@@ -96,6 +96,12 @@ export type AnnotationDraft = Omit<TextAnnotation, 'id' | 'zIndex'> | Omit<PathA
 
 export type RedactionType = 'blur' | 'pixelate' | 'solid';
 
+export interface BlurBrushSettings {
+  mode: 'blur' | 'pixelate';
+  width: number;
+  strength: number;
+}
+
 export interface Redaction {
   id: string;
   name?: string;
@@ -104,12 +110,16 @@ export interface Redaction {
   visible: boolean;
   locked: boolean;
   bounds: { x: number; y: number; width: number; height: number };
+  /** Brush points relative to bounds; absent for legacy rectangular masks. */
+  points?: Point[];
   transform: CanvasTransform;
   style: {
     color: string;
     opacity: number;
     blurRadius?: number;
     pixelSize?: number;
+    brushWidth?: number;
+    strength?: number;
   };
 }
 

@@ -1,9 +1,10 @@
+import { DEFAULT_BLUR_BRUSH } from '../../modules/canvas-editor/blurBrush';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
 import { browser } from 'wxt/browser';
 import { listProjects } from '../../modules/storage/clipStore';
 import { useEditorStore, selectedEntity } from '../../stores/editorStore';
-import type { ClipProject, EditorTool } from '../../types/editor';
+import type { BlurBrushSettings, ClipProject, EditorTool } from '../../types/editor';
 import { EditorToolbar } from './EditorToolbar';
 import { AssetPanel } from './AssetPanel';
 import { LayerPanel } from './LayerPanel';
@@ -16,6 +17,8 @@ import type { AnnotationStyle } from '../../types/editor';
 import '../../styles/editor.css';
 
 export function EditorShell(): React.JSX.Element {
+  const [blurBrush, setBlurBrush] = useState<BlurBrushSettings>(DEFAULT_BLUR_BRUSH);
+  const [eraserWidth, setEraserWidth] = useState(56);
   const [leftTab, setLeftTab] = useState<'assets' | 'layers'>('assets');
   const [inspectorOpen, setInspectorOpen] = useState(() => window.innerWidth >= 1100);
   const project = useEditorStore((state) => state.project);
@@ -42,6 +45,7 @@ export function EditorShell(): React.JSX.Element {
   const setViewport = useEditorStore((state) => state.setViewport);
   const select = useEditorStore((state) => state.select);
   const removeSelected = useEditorStore((state) => state.removeSelected);
+  const removeLayers = useEditorStore((state) => state.removeLayers);
   const duplicateSelected = useEditorStore((state) => state.duplicateSelected);
   const autoLayout = useEditorStore((state) => state.autoLayout);
   const setLayoutMode = useEditorStore((state) => state.setLayoutMode);
@@ -121,11 +125,11 @@ export function EditorShell(): React.JSX.Element {
     await refreshProjects();
   };
   return <main className="editor-app">
-    <EditorToolbar project={project} projects={projects} status={status === 'saving' ? '保存中' : error ? '错误' : '已保存'} canUndo={history.length > 0} canRedo={future.length > 0} activeTool={activeTool} toolStyle={toolStyle} onTool={setActiveTool} onOpenProject={(id) => void load(id)} onNewProject={createNamedProject} onRenameProject={(name) => void renameCurrentProject(name)} onUndo={undo} onRedo={redo} onAddAsset={focusAssets} onAutoLayout={autoLayout} onToggleLayout={toggleLayout} onBackground={setBackground} onGradient={setGradient} onExport={() => setExportOpen(true)} onOpenLibrary={() => void browser.tabs.create({ url: browser.runtime.getURL(`/library.html?projectId=${encodeURIComponent(project.id)}` as never) })} projectCaptureActive={projectCaptureActive && projectCaptureProjectId === project.id} projectCaptureName={projectCaptureName} onStartProjectCapture={() => void startProjectCapture()} onStopProjectCapture={() => void stopProjectCapture()} inspectorOpen={inspectorOpen} onToggleInspector={() => setInspectorOpen((open) => !open)} onToolStyle={(style) => setToolStyles((current) => ({ ...current, [activeTool]: style }))} />
+    <EditorToolbar blurBrush={blurBrush} onBlurBrush={setBlurBrush} eraserWidth={eraserWidth} onEraserWidth={setEraserWidth} project={project} projects={projects} status={status === 'saving' ? '保存中' : error ? '错误' : '已保存'} canUndo={history.length > 0} canRedo={future.length > 0} activeTool={activeTool} toolStyle={toolStyle} onTool={setActiveTool} onOpenProject={(id) => void load(id)} onNewProject={createNamedProject} onRenameProject={(name) => void renameCurrentProject(name)} onUndo={undo} onRedo={redo} onAddAsset={focusAssets} onAutoLayout={autoLayout} onToggleLayout={toggleLayout} onBackground={setBackground} onGradient={setGradient} onExport={() => setExportOpen(true)} onOpenLibrary={() => void browser.tabs.create({ url: browser.runtime.getURL(`/library.html?projectId=${encodeURIComponent(project.id)}` as never) })} projectCaptureActive={projectCaptureActive && projectCaptureProjectId === project.id} projectCaptureName={projectCaptureName} onStartProjectCapture={() => void startProjectCapture()} onStopProjectCapture={() => void stopProjectCapture()} inspectorOpen={inspectorOpen} onToggleInspector={() => setInspectorOpen((open) => !open)} onToolStyle={(style) => setToolStyles((current) => ({ ...current, [activeTool]: style }))} />
     {(error || captureNotice) && <div className="editor-alert">{error ?? captureNotice}</div>}
     <div className={`editor-grid ${inspectorOpen ? '' : 'inspector-hidden'}`}>
       <aside className="left-rail"><div className="rail-tabs" role="tablist" aria-label="编辑器侧栏"><button id="assets-tab" role="tab" aria-selected={leftTab === 'assets'} aria-controls="assets-panel" onClick={() => setLeftTab('assets')}>素材</button><button id="layers-tab" role="tab" aria-selected={leftTab === 'layers'} aria-controls="layers-panel" onClick={() => setLeftTab('layers')}>图层</button></div><div id="assets-panel" role="tabpanel" aria-labelledby="assets-tab" hidden={leftTab !== 'assets'}><AssetPanel clips={clips} project={project} onAdd={addClip} /></div><div id="layers-panel" role="tabpanel" aria-labelledby="layers-tab" hidden={leftTab !== 'layers'}><LayerPanel project={project} clips={clips} selectedIds={selectedIds} onSelect={select} onDelete={removeSelected} onDuplicate={duplicateSelected} onReorder={reorder} onVisibility={setItemVisibility} onLock={setItemLocked} onRename={renameItem} /></div></aside>
-      <StudioViewport project={project} clips={clips} selectedIds={selectedIds} activeTool={activeTool} toolStyle={toolStyle} onTool={setActiveTool} onSelect={select} onUpdateItems={updateItems} onAddAnnotation={addAnnotation} onUpdateAnnotation={updateAnnotation} onUpdateAnnotations={updateAnnotations} onAddRedaction={addRedaction} onUpdateRedaction={updateRedaction} onUpdateRedactions={updateRedactions} onSetViewport={setViewport} onStageReady={(stage) => { stageRef.current = stage; }} />
+      <StudioViewport blurBrush={blurBrush} eraserWidth={eraserWidth} project={project} clips={clips} selectedIds={selectedIds} activeTool={activeTool} toolStyle={toolStyle} onTool={setActiveTool} onSelect={select} onUpdateItems={updateItems} onAddAnnotation={addAnnotation} onUpdateAnnotation={updateAnnotation} onUpdateAnnotations={updateAnnotations} onAddRedaction={addRedaction} onUpdateRedaction={updateRedaction} onUpdateRedactions={updateRedactions} onErase={removeLayers} onSetViewport={setViewport} onStageReady={(stage) => { stageRef.current = stage; }} />
       <aside id="editor-inspector" className="editor-inspector" hidden={!inspectorOpen}><InspectorPanel project={project} clips={clips} selectedLayer={selected} onUpdateItem={updateItem} onUpdateItemStyle={updateItemStyle} onUpdateAnnotation={updateAnnotation} onUpdateRedaction={updateRedaction} /></aside>
     </div>
     {exportOpen && <ExportDialog project={project} clips={clips} onClose={() => setExportOpen(false)} />}

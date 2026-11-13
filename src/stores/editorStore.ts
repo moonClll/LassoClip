@@ -22,6 +22,7 @@ interface EditorState {
   save: () => Promise<void>;
   addClip: (clip: ClipItemSummary) => void;
   removeSelected: () => void;
+  removeLayers: (ids: string[]) => void;
   duplicateSelected: () => void;
   addAnnotation: (annotation: AnnotationDraft) => void;
   addRedaction: (redaction: Omit<Redaction, 'id' | 'zIndex'>) => void;
@@ -155,6 +156,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { project, selectedIds, history, future } = get();
     if (!project || selectedIds.length === 0) return;
     const rawIds = new Set(selectedIds.map(entityIdFromSelection));
+    const next = commit(project, { ...project, items: project.items.filter((item) => !rawIds.has(item.id)), annotations: project.annotations.filter((annotation) => !rawIds.has(annotation.id)), redactions: project.redactions.filter((redaction) => !rawIds.has(redaction.id)) }, history, future);
+    set({ ...next, selectedIds: [] });
+  },
+
+  removeLayers: (ids) => {
+    const { project, history, future } = get();
+    if (!project || ids.length === 0) return;
+    const rawIds = new Set(ids.map(entityIdFromSelection));
     const next = commit(project, { ...project, items: project.items.filter((item) => !rawIds.has(item.id)), annotations: project.annotations.filter((annotation) => !rawIds.has(annotation.id)), redactions: project.redactions.filter((redaction) => !rawIds.has(redaction.id)) }, history, future);
     set({ ...next, selectedIds: [] });
   },

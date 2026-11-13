@@ -114,8 +114,9 @@ function drawAnnotation(context: CanvasRenderingContext2D, annotation: Annotatio
   const { transform, style } = annotation;
   context.save();
   context.globalAlpha = transform.opacity * (style.opacity ?? 1);
-  context.translate(transform.x * scale, transform.y * scale);
+  context.translate((transform.x + transform.width / 2) * scale, (transform.y + transform.height / 2) * scale);
   context.rotate(transform.rotation * Math.PI / 180);
+  context.translate(-transform.width * scale / 2, -transform.height * scale / 2);
   context.lineWidth = (style.strokeWidth ?? 3) * scale;
   context.strokeStyle = style.stroke ?? '#7c3aed';
   context.fillStyle = style.fill ?? 'transparent';
@@ -172,6 +173,7 @@ function createScratchCanvas(width: number, height: number): HTMLCanvasElement {
 /** Applies a redaction to already flattened pixels. The source pixels are replaced. */
 export function applyRedaction(context: CanvasRenderingContext2D, redaction: Redaction, scale: number): void {
   if (!redaction.visible) return;
+  if (redaction.points?.length) { applyBrushRedaction(context, redaction, scale); return; }
   const x = redaction.transform.x * scale;
   const y = redaction.transform.y * scale;
   const width = Math.max(1, redaction.transform.width * scale);
@@ -206,29 +208,106 @@ export function applyRedaction(context: CanvasRenderingContext2D, redaction: Red
   context.restore();
 }
 
+/** Rasterize the swept brush into an alpha mask, then apply the effect only inside it. */
+function applyBrushRedaction(context: CanvasRenderingContext2D, redaction: Redaction, scale: number): void {
+  const { transform: t, bounds, style, points = [] } = redaction;
+  const sx = t.width / bounds.width, sy = t.height / bounds.height;
+  const angle = t.rotation * Math.PI / 180, cos = Math.cos(angle), sin = Math.sin(angle);
+  const world = points.map((p) => {
+    const x = (p.x - bounds.width / 2) * sx, y = (p.y - bounds.height / 2) * sy;
+    return { x: (t.x + t.width / 2 + x * cos - y * sin) * scale, y: (t.y + t.height / 2 + x * sin + y * cos) * scale };
+  });
+  const radius = (style.brushWidth ?? 80) * Math.max(Math.abs(sx), Math.abs(sy)) * scale / 2;
+  const strength = Math.max(1, style.strength ?? (redaction.type === 'pixelate' ? (style.pixelSize ?? 10) / 2 : style.blurRadius ?? 12));
+  const blur = strength * scale;
+  const block = Math.max(2, Math.round(strength * 2 * scale));
+  const padding = radius + (redaction.type === 'blur' ? blur * 3 : block);
+  const left = Math.max(0, Math.floor((Math.min(...world.map((p) => p.x)) - padding) / block) * block);
+  const top = Math.max(0, Math.floor((Math.min(...world.map((p) => p.y)) - padding) / block) * block);
+  const right = Math.min(context.canvas.width, Math.ceil((Math.max(...world.map((p) => p.x)) + padding) / block) * block);
+  const bottom = Math.min(context.canvas.height, Math.ceil((Math.max(...world.map((p) => p.y)) + padding) / block) * block);
+  if (right <= left || bottom <= top) return;
+  const source = createScratchCanvas(right - left, bottom - top);
+  const sourceContext = source.getContext('2d');
+  const effect = createScratchCanvas(source.width, source.height);
+  const effectContext = effect.getContext('2d');
+  const mask = createScratchCanvas(source.width, source.height);
+  const maskContext = mask.getContext('2d');
+  if (!sourceContext || !effectContext || !maskContext) return;
+  sourceContext.drawImage(context.canvas, left, top, source.width, source.height, 0, 0, source.width, source.height);
+  if (redaction.type === 'pixelate') {
+    const small = createScratchCanvas(Math.ceil(source.width / block), Math.ceil(source.height / block));
+    const smallContext = small.getContext('2d');
+    if (!smallContext) return;
+    // Keep the mosaic grid fixed while the stroke grows.
+    smallContext.drawImage(source, 0, 0, source.width / block, source.height / block);
+    effectContext.imageSmoothingEnabled = false;
+    effectContext.drawImage(small, 0, 0, small.width * block, small.height * block);
+  } else {
+    effectContext.filter = `blur(${blur}px)`;
+    effectContext.drawImage(source, 0, 0);
+    effectContext.filter = 'none';
+  }
+  maskContext.translate((t.x + t.width / 2) * scale - left, (t.y + t.height / 2) * scale - top);
+  maskContext.rotate(angle);
+  maskContext.scale(sx * scale, sy * scale);
+  maskContext.translate(-bounds.width / 2, -bounds.height / 2);
+  maskContext.strokeStyle = '#000'; maskContext.fillStyle = '#000';
+  maskContext.lineWidth = style.brushWidth ?? 80;
+  maskContext.lineCap = 'round'; maskContext.lineJoin = 'round';
+  if (points.length === 1) {
+    maskContext.beginPath(); maskContext.arc(points[0].x, points[0].y, maskContext.lineWidth / 2, 0, Math.PI * 2); maskContext.fill();
+  } else {
+    maskContext.beginPath(); maskContext.moveTo(points[0].x, points[0].y);
+    points.slice(1).forEach((p) => maskContext.lineTo(p.x, p.y)); maskContext.stroke();
+  }
+  effectContext.globalCompositeOperation = 'destination-in';
+  effectContext.drawImage(mask, 0, 0);
+  // Replace covered pixels, including their alpha, so transparent exports do
+  // not reveal the original sharp pixels beneath a translucent blurred edge.
+  sourceContext.globalAlpha = t.opacity * style.opacity;
+  sourceContext.globalCompositeOperation = 'destination-out';
+  sourceContext.drawImage(mask, 0, 0);
+  sourceContext.globalCompositeOperation = 'lighter';
+  sourceContext.drawImage(effect, 0, 0);
+  context.save(); context.setTransform(1, 0, 0, 1, 0, 0);
+  context.globalAlpha = 1;
+  context.clearRect(left, top, source.width, source.height);
+  context.drawImage(source, left, top); context.restore();
+}
+
+/** Shared by the interactive canvas and export, using already decoded source images. */
+export function renderProjectPixels(project: ClipProject, images: Map<string, ImageBitmap | HTMLImageElement>, scale = 1, background?: ExportOptions['background']): HTMLCanvasElement {
+  const canvas = createScratchCanvas(project.canvas.width * scale, project.canvas.height * scale);
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('当前浏览器不支持 Canvas 2D');
+  drawBackground(context, project, scale, background);
+  const layers = [...project.items, ...project.annotations, ...project.redactions].filter((layer) => layer.visible).sort((a, b) => a.zIndex - b.zIndex);
+  for (const layer of layers) {
+    if ('bounds' in layer) applyRedaction(context, layer, scale);
+    else if (layer.type === 'image' && 'clipId' in layer) {
+      const image = images.get(layer.clipId);
+      if (image) drawImageItem(context, layer, image, scale);
+    } else if ('points' in layer || layer.type === 'text') drawAnnotation(context, layer as Annotation, scale);
+  }
+  return canvas;
+}
+
 export async function renderProjectToCanvas(project: ClipProject, clips: ClipItemRecord[], options: ExportOptions = {}): Promise<HTMLCanvasElement> {
   const dimensions = resolveExportDimensions(project, options);
   const scale = dimensions.scale;
-  const baseCanvas = createScratchCanvas(project.canvas.width * scale, project.canvas.height * scale);
-  const context = baseCanvas.getContext('2d');
-  if (!context) throw new Error('当前浏览器不支持 Canvas 2D 导出');
   const background = options.format === 'jpeg' && options.background === null ? '#ffffff' : options.background;
-  drawBackground(context, project, scale, background);
-  const clipMap = new Map(clips.map((clip) => [clip.id, clip]));
-  const layers = [...project.items, ...project.annotations, ...project.redactions].filter((layer) => layer.visible).sort((a, b) => a.zIndex - b.zIndex);
-  for (const layer of layers) {
-    if (layer.type === 'image' && 'clipId' in layer) {
-      const clip = clipMap.get(layer.clipId);
-      if (clip) {
-        const decoded = await decodeClip(clip);
-        try { drawImageItem(context, layer, decoded.image, scale); }
-        finally {
-          if ('close' in decoded.image && typeof decoded.image.close === 'function') decoded.image.close();
-          if (decoded.objectUrl) URL.revokeObjectURL(decoded.objectUrl);
-        }
-      }
-    } else if ('bounds' in layer) applyRedaction(context, layer, scale);
-    else if ('points' in layer || layer.type === 'text') drawAnnotation(context, layer as Annotation, scale);
+  const decoded = new Map<string, DecodedClip>();
+  let baseCanvas: HTMLCanvasElement;
+  try {
+    const ids = new Set(project.items.filter((item) => item.type === 'image' && item.visible).map((item) => item.type === 'image' ? item.clipId : ''));
+    for (const clip of clips) if (ids.has(clip.id)) decoded.set(clip.id, await decodeClip(clip));
+    baseCanvas = renderProjectPixels(project, new Map([...decoded].map(([id, value]) => [id, value.image])), scale, background);
+  } finally {
+    for (const value of decoded.values()) {
+      if ('close' in value.image && typeof value.image.close === 'function') value.image.close();
+      if (value.objectUrl) URL.revokeObjectURL(value.objectUrl);
+    }
   }
   if (baseCanvas.width === dimensions.width && baseCanvas.height === dimensions.height) return baseCanvas;
   const output = createScratchCanvas(dimensions.width, dimensions.height);

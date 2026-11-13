@@ -11,7 +11,7 @@ export function drawingBounds(drawing: DrawingGesture): Redaction['bounds'] {
 }
 
 export function createDrawingAnnotation(tool: EditorTool, drawing: DrawingGesture, style: AnnotationStyle): AnnotationDraft | undefined {
-  if (tool === 'select' || tool === 'text' || tool.startsWith('redact-') || drawing.points.length < 2) return undefined;
+  if (tool === 'select' || tool === 'text' || tool === 'eraser' || tool.startsWith('redact-') || drawing.points.length < 2) return undefined;
   const type = tool as Exclude<AnnotationDraft['type'], 'text'>;
   const bounds = drawingBounds(drawing);
   const path = tool === 'arrow' || tool === 'line' ? [drawing.start, drawing.points[drawing.points.length - 1]] : drawing.points;

@@ -18,6 +18,7 @@ const paths = {
   rectangle: 'M3 5h18v14H3z',
   ellipse: 'M22 12a10 7 0 1 1-20 0 10 7 0 0 1 20 0',
   pen: 'm16 3 5 5M4 20l4-1L21 6l-5-5L3 14l-1 8z',
+  eraser: 'm7 21 10-10m-5-8 8 8-9 9H5l-3-3 12-12a2 2 0 0 1 3 0zM14 21h7',
   highlight: 'm9 11 6-8 6 6-8 6zM9 11l4 4-4 4H5v-4zM3 22h18',
   shield: 'M12 3 3 7v6c0 5 9 9 9 9s9-4 9-9V7zM9 12l2 2 4-4',
   undo: 'M3 8h10a6 6 0 0 1 0 12H9M3 8l5-5M3 8l5 5',

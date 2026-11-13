@@ -14,7 +14,7 @@ export function defaultToolStyle(tool: EditorTool): AnnotationStyle {
   return { stroke: tool === 'highlight' ? '#facc15' : '#b85c3d', strokeWidth: tool === 'highlight' ? 18 : 3, opacity: tool === 'highlight' ? .45 : 1, lineCap: 'round', lineJoin: 'round', arrowSize: 12 };
 }
 
-export function isAnnotationTool(tool: EditorTool): boolean { return tool !== 'select' && !tool.startsWith('redact-'); }
+export function isAnnotationTool(tool: EditorTool): boolean { return tool !== 'select' && tool !== 'eraser' && !tool.startsWith('redact-'); }
 
 /** Color inputs require RGB hex; keep legacy RGBA highlights editable. */
 export function colorInputValue(value: string | undefined, fallback = '#b85c3d'): string {
